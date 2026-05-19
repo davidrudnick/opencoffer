@@ -143,6 +143,27 @@ docker compose --profile ollama up -d ollama
 
 Then point the app at `http://ollama:11434/v1` (inside Docker) or `http://host.docker.internal:11434/v1` (host Ollama from a container).
 
+### Use your ChatGPT Plus/Pro subscription instead of an API key
+
+OpenCoffer can talk to the same backend the official `codex` CLI uses, so a ChatGPT Plus/Pro/Business subscription works as a model credential — no extra OpenAI API spend.
+
+1. Install the official [Codex CLI](https://github.com/openai/codex) and sign in with your ChatGPT account:
+
+   ```bash
+   npm install -g @openai/codex
+   codex login
+   ```
+
+   This opens a browser, completes the OAuth flow, and writes a token bundle to `~/.codex/auth.json`.
+
+2. In OpenCoffer, go to **Settings → Models → Add credential** and pick **ChatGPT Plus/Pro subscription** as the provider.
+
+3. Paste the entire contents of `~/.codex/auth.json` into the credential field and pick a model (e.g. one of the GPT-5.x options exposed via the codex backend). Leave the base URL blank — OpenCoffer defaults to `https://chatgpt.com/backend-api/codex`.
+
+4. Save. OpenCoffer encrypts the token bundle with `APP_ENCRYPTION_KEY` and automatically refreshes the access token against `auth.openai.com` when it's within 60 seconds of expiry. If a refresh ever fails (you signed out elsewhere, the refresh token rotated, etc.), re-run `codex login` and paste the new `auth.json`.
+
+This works for both the in-app chat and the background analysis model (categorization, insights, snapshots). Same auth, same provider config.
+
 ### SimpleFIN
 
 OpenCoffer uses [SimpleFIN](https://www.simplefin.org/) for read-only bank and brokerage data. There are no app-wide credentials — each user pastes their own setup token in **Settings → Connections**. The token is claimed once; the resulting access URL is encrypted with `APP_ENCRYPTION_KEY`.
