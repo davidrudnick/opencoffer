@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+dist/
+out/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# Local environment & secrets
+.env
+.env.local
+.env.*.local
+*.local
+!.env.example
+
+# Local data
+/data/
+*.sqlite
+*.sqlite-journal
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+.~lock.*#
+
+# Agent / tool caches
+.agents/
+.codex/
+.codeward/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*

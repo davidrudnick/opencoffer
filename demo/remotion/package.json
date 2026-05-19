@@ -1,0 +1,17 @@
+{
+  "name": "opencoffer-demo",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render:gif": "remotion render src/index.ts OpenCofferDemo ../../public/demo.gif --codec=gif --every-nth-frame=2"
+  },
+  "dependencies": {
+    "@remotion/cli": "latest",
+    "remotion": "latest",
+    "typescript": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}
