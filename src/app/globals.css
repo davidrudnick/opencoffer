@@ -49,6 +49,8 @@
     --md-inverse-surface: 220 4% 19%;
     --md-inverse-on-surface: 240 11% 95%;
     --md-scrim: 0 0% 0%;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     --font-serif: Georgia, "Times New Roman", serif;
   }
 
@@ -236,6 +238,11 @@
     user-select: none;
   }
   .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  .btn:focus-visible,
+  .btn-icon:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px hsl(var(--md-primary) / 0.28);
+  }
 
   .btn-filled {
     background: hsl(var(--md-primary));

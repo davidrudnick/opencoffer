@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://opencoffer:opencoffer@localhost:5432/opencoffer
+      NEXTAUTH_SECRET: ci-nextauth-secret
+      NEXTAUTH_URL: http://localhost:3000
+      APP_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: npx tsc --noEmit
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build

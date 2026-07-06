@@ -29,10 +29,15 @@ const config: Config = {
         tertiary: "hsl(var(--md-tertiary) / <alpha-value>)",
         "tertiary-container": "hsl(var(--md-tertiary-container) / <alpha-value>)",
         error: "hsl(var(--md-error) / <alpha-value>)",
+        "on-error": "hsl(var(--md-on-error) / <alpha-value>)",
         "error-container": "hsl(var(--md-error-container) / <alpha-value>)",
+        "on-error-container": "hsl(var(--md-on-error-container) / <alpha-value>)",
         success: "hsl(var(--md-success) / <alpha-value>)",
+        "success-container": "hsl(var(--md-success-container) / <alpha-value>)",
+        "on-success-container": "hsl(var(--md-on-success-container) / <alpha-value>)",
         outline: "hsl(var(--md-outline) / <alpha-value>)",
         "outline-variant": "hsl(var(--md-outline-variant) / <alpha-value>)",
+        scrim: "hsl(var(--md-scrim) / <alpha-value>)",
 
         // shims for any class names libraries expect
         background: "hsl(var(--md-surface) / <alpha-value>)",

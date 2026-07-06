@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db/client";
-import { transactions, financialAccounts } from "@/lib/db/schema";
+import { transactions, financialAccounts, categoryRules } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { AppBar } from "@/components/AppBar";
 import { TransactionsClient } from "./TransactionsClient";
@@ -28,14 +28,32 @@ export default async function TransactionsPage() {
       userNotes: transactions.userNotes,
       pending: transactions.pending,
       currency: transactions.isoCurrencyCode,
+      accountId: financialAccounts.id,
       accountName: financialAccounts.name,
       accountMask: financialAccounts.mask,
+      accountSource: financialAccounts.source,
     })
     .from(transactions)
     .leftJoin(financialAccounts, eq(financialAccounts.id, transactions.accountId))
     .where(eq(transactions.userId, session.user.id))
     .orderBy(desc(transactions.date))
     .limit(500);
+  const accounts = await db
+    .select({
+      id: financialAccounts.id,
+      name: financialAccounts.name,
+      type: financialAccounts.type,
+      source: financialAccounts.source,
+      currency: financialAccounts.isoCurrencyCode,
+    })
+    .from(financialAccounts)
+    .where(eq(financialAccounts.userId, session.user.id))
+    .orderBy(financialAccounts.name);
+  const rules = await db
+    .select()
+    .from(categoryRules)
+    .where(eq(categoryRules.userId, session.user.id))
+    .orderBy(desc(categoryRules.createdAt));
 
   return (
     <>
@@ -47,6 +65,11 @@ export default async function TransactionsPage() {
             date: r.date.toISOString(),
             amount: Number(r.amount),
           }))}
+          initialRules={rules.map((r) => ({
+            ...r,
+            createdAt: r.createdAt.toISOString(),
+          }))}
+          accounts={accounts}
         />
       </div>
     </>

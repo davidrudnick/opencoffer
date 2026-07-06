@@ -26,7 +26,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={cycle}
-      className="grid h-10 w-10 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-white/10 hover:text-on-surface"
+      className="grid h-10 w-10 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-on-surface/10 hover:text-on-surface"
       aria-label={`Theme: ${mode}. Click to switch.`}
       title={`Theme: ${mode}`}
     >

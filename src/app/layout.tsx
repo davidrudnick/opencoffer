@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Roboto_Flex, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -12,19 +11,6 @@ export const viewport: Viewport = {
   ],
 };
 
-const sans = Roboto_Flex({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  axes: ["opsz"],
-  display: "swap",
-});
-
-const mono = Roboto_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
   title: "OpenCoffer",
   description:
@@ -33,7 +19,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var m=localStorage.getItem("of-theme")||"dark";var r=document.documentElement;if(m==="system")r.removeAttribute("data-theme");else r.setAttribute("data-theme",m);}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-surface text-on-surface antialiased">{children}</body>
     </html>
   );

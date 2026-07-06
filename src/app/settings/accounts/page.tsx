@@ -26,6 +26,7 @@ export default async function AccountsPage() {
       userOverride: financialAccounts.userAccountGroup,
       currentBalance: financialAccounts.currentBalance,
       currency: financialAccounts.isoCurrencyCode,
+      source: financialAccounts.source,
     })
     .from(financialAccounts)
     .where(inArray(financialAccounts.userId, ids))

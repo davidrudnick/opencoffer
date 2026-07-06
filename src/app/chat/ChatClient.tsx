@@ -285,7 +285,7 @@ export function ChatClient({
             <select
               value={credentialId}
               onChange={(e) => setCredentialId(e.target.value)}
-              className="h-9 max-w-[160px] truncate rounded-full border border-white/10 bg-surface-container px-3 text-xs text-on-surface focus:border-primary focus:outline-none md:h-10 md:max-w-none md:px-4 md:text-sm"
+              className="h-9 max-w-[160px] truncate rounded-full border border-outline-variant bg-surface-container px-3 text-xs text-on-surface focus:border-primary focus:outline-none md:h-10 md:max-w-none md:px-4 md:text-sm"
             >
               {credentials.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -308,7 +308,7 @@ export function ChatClient({
                 if (next) void loadThread(next);
                 else newChat();
               }}
-              className="h-10 min-w-0 flex-1 rounded-full border border-white/10 bg-surface-container px-3 body-s text-on-surface focus:border-primary focus:outline-none"
+              className="h-10 min-w-0 flex-1 rounded-full border border-outline-variant bg-surface-container px-3 body-s text-on-surface focus:border-primary focus:outline-none"
               aria-label="Chat history"
             >
               <option value="">
@@ -420,7 +420,7 @@ export function ChatClient({
 
                 {isLoading && (
                   <Message role="assistant">
-                    <div className="flex items-center gap-2 text-on-surface-variant">
+                    <div className="flex items-center gap-2 text-on-surface-variant" aria-live="polite">
                       <span className="inline-flex gap-1">
                         <span className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />
                         <span className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
@@ -444,7 +444,7 @@ export function ChatClient({
                 value={input}
                 onChange={handleInputChange}
                 placeholder="Ask about your money…"
-                className="h-14 flex-1 rounded-full border border-white/10 bg-surface-container px-5 text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none"
+                className="h-14 flex-1 rounded-full border border-outline-variant bg-surface-container px-5 text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:outline-none"
                 autoFocus
               />
               <button

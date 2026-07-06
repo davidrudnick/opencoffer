@@ -9,6 +9,7 @@ import {
   WORKSPACE_NAV,
   SETTINGS_NAV,
   BOTTOM_NAV,
+  isActive,
   type NavItem,
 } from "@/components/nav-config";
 import { useDrawer } from "@/components/DrawerContext";
@@ -48,7 +49,7 @@ export function MobileChrome({
             className="absolute inset-0 bg-black/40 animate-in fade-in"
             onClick={() => setOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-[78%] max-w-[320px] flex-col border-r border-white/10 bg-surface-low shadow-2xl animate-in slide-in-from-left">
+          <aside className="absolute inset-y-0 left-0 flex w-[78%] max-w-[320px] flex-col border-r border-outline-variant bg-surface-low shadow-2xl animate-in slide-in-from-left">
             <div className="flex items-center justify-between px-4 pt-5 pb-4">
               <Link href="/dashboard" prefetch className="flex items-center gap-3">
                 <Logo size={32} priority />
@@ -110,9 +111,10 @@ export function MobileChrome({
                 isChat
                   ? "mx-1 bg-primary text-on-primary shadow-[0_0_24px_hsl(var(--md-primary)/0.45)]"
                   : active
-                    ? "bg-white/10 text-on-surface"
-                    : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface",
+                    ? "bg-primary-container text-on-primary-container"
+                    : "text-on-surface-variant hover:bg-on-surface/[0.05] hover:text-on-surface",
               )}
+              aria-current={active ? "page" : undefined}
             >
               <n.Icon size={22} strokeWidth={active ? 2.2 : 1.75} />
               <span className={cn("text-[10px] font-medium leading-none", isChat && "sr-only")}>
@@ -126,24 +128,8 @@ export function MobileChrome({
   );
 }
 
-/** Routes the bottom-nav tab should highlight for, in addition to the literal href. */
-const NAV_ALIASES: Record<string, string[]> = {
-  "/dashboard": [],
-  "/dashboard/charts": [],
-  "/chat": [],
-  "/dashboard/subscriptions": [],
-  "/dashboard/investments": [],
-};
-
-function isActive(path: string, href: string): boolean {
-  if (href === "/dashboard") return path === "/dashboard" || (NAV_ALIASES["/dashboard"]?.includes(path) ?? false);
-  if (path === href) return true;
-  if (path.startsWith(href + "/")) return true;
-  return NAV_ALIASES[href]?.some((a) => path === a || path.startsWith(a + "/")) ?? false;
-}
-
 function DrawerLink({ href, label, Icon, path }: NavItem & { path: string }) {
-  const active = href === "/dashboard" ? path === "/dashboard" : path.startsWith(href);
+  const active = isActive(path, href);
   return (
     <Link
       href={href}
@@ -154,6 +140,7 @@ function DrawerLink({ href, label, Icon, path }: NavItem & { path: string }) {
           ? "bg-primary-container text-on-primary-container"
           : "hover:bg-on-surface/[0.04]",
       )}
+      aria-current={active ? "page" : undefined}
     >
       <Icon size={20} strokeWidth={1.75} />
       <span className="body-l flex-1">{label}</span>

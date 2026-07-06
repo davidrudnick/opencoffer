@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Copy, UserPlus, LogOut } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Member = {
   userId: string;
@@ -23,6 +24,7 @@ export function HouseholdClient({
   members: Member[];
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [name, setName] = useState(household.name);
   const [invite, setInvite] = useState<{ url: string; expiresAt: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,7 +53,12 @@ export function HouseholdClient({
   };
 
   const leave = async () => {
-    if (!confirm("Leave this household? You'll be given a fresh personal one.")) return;
+    const ok = await confirm({
+      title: "Leave household?",
+      body: "Leave this household? You'll be given a fresh personal one.",
+      confirmLabel: "Leave",
+    });
+    if (!ok) return;
     const r = await fetch("/api/household", { method: "DELETE" });
     const j = await r.json();
     if (!r.ok) setErr(j.error ?? "Couldn't leave");

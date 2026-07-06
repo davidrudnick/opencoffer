@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DataTable, Th, Td, Tr, Thead } from "@/components/DataTable";
 import { Plus, Check, Pencil, Save, X } from "lucide-react";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Cred = {
   id: string;
@@ -39,6 +40,7 @@ const PRESETS = [
 
 export function LlmClient({ initial }: { initial: Cred[] }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [creds, setCreds] = useState(initial);
   const [form, setForm] = useState({
     label: "",
@@ -159,7 +161,12 @@ export function LlmClient({ initial }: { initial: Cred[] }) {
   };
 
   const del = async (id: string) => {
-    if (!confirm("Delete this credential?")) return;
+    const ok = await confirm({
+      title: "Delete credential?",
+      body: "Delete this credential?",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     await fetch(`/api/settings/llm/${id}`, { method: "DELETE" });
     setCreds((cs) => cs.filter((c) => c.id !== id));
   };

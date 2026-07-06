@@ -14,7 +14,7 @@ export function AppBar({
   actions?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-white/5 bg-surface/76 px-2 backdrop-blur-xl md:h-16 md:gap-4 md:px-8">
+    <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-outline-variant bg-surface/76 px-2 backdrop-blur-xl md:h-16 md:gap-4 md:px-8">
       <DrawerTrigger />
       <div className="min-w-0 flex-1">
         <div className="title-l coffer-serif truncate text-on-surface">{title}</div>

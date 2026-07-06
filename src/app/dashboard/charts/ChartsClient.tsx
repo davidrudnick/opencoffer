@@ -5,6 +5,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, Plus, Trash2, X, Sparkles, Loader2 } from "lucide-react";
 import { ChartMetadata, ChatChart, type ChartSpec } from "@/components/ChatChart";
+import { useConfirm } from "@/components/ConfirmDialog";
+import { useToast } from "@/components/Toaster";
 import { addSavedChart, deleteSavedChart } from "./actions";
 
 export type ChartCard = {
@@ -115,14 +117,22 @@ export function ChartsClient({
 
 function CardShell({ card, deletable }: { card: ChartCard; deletable?: boolean }) {
   const [pending, startTransition] = useTransition();
-  function remove() {
+  const confirm = useConfirm();
+  const toast = useToast();
+
+  async function remove() {
     if (!card.id) return;
-    if (!confirm(`Delete chart "${card.title}"?`)) return;
+    const ok = await confirm({
+      title: "Delete chart?",
+      body: `Delete chart "${card.title}"?`,
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     startTransition(async () => {
       try {
         await deleteSavedChart(card.id!);
       } catch (e) {
-        alert(`Couldn't delete: ${(e as Error).message}`);
+        toast.error("Couldn't delete chart", (e as Error).message);
       }
     });
   }
@@ -309,7 +319,7 @@ function AddChartCard() {
       ) : (
         <button
           onClick={() => setOpen(true)}
-          className="coffer-card-hover flex h-full min-h-[200px] w-full flex-col items-center justify-center gap-3 rounded-[20px] border border-dashed border-white/15 bg-surface-container-low text-on-surface-variant transition-colors hover:border-primary hover:bg-primary/[0.04] hover:text-primary"
+          className="coffer-card-hover flex h-full min-h-[200px] w-full flex-col items-center justify-center gap-3 rounded-[20px] border border-dashed border-outline-variant bg-surface-container-low text-on-surface-variant transition-colors hover:border-primary hover:bg-primary/[0.04] hover:text-primary"
         >
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-container text-on-primary-container">
             <Plus size={22} strokeWidth={2} />

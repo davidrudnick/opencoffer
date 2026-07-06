@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { users } from "@/lib/db/schema";
+import { rateLimitAttempt, type RateLimitStore } from "@/lib/auth/rateLimit";
 
 const schema = z.object({
   email: z.string().email().transform((s) => s.toLowerCase().trim()),
@@ -11,12 +12,27 @@ const schema = z.object({
   name: z.string().optional(),
 });
 
+const registerAttempts: RateLimitStore = new Map();
+
+function requestIp(req: Request): string {
+  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || req.headers.get("x-real-ip") || "unknown";
+}
+
 export async function POST(req: Request) {
+  if (!rateLimitAttempt(registerAttempts, requestIp(req))) {
+    return NextResponse.json({ error: "Too many registration attempts. Try again later." }, { status: 429 });
+  }
+
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Bad request" }, { status: 400 });
   }
   const { email, password, name } = parsed.data;
+  const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
+  if (process.env.DISABLE_REGISTRATION === "1" && firstUser) {
+    return NextResponse.json({ error: "Registration is disabled" }, { status: 403 });
+  }
   const [existing] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (existing) return NextResponse.json({ error: "Email already registered" }, { status: 409 });
   const passwordHash = await bcrypt.hash(password, 12);

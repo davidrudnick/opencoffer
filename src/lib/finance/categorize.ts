@@ -21,10 +21,11 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { transactions, financialAccounts, llmCredentials } from "@/lib/db/schema";
+import { applyCategoryRules } from "@/lib/finance/rules";
 import { getModel } from "@/lib/llm/providers";
 import { streamText } from "ai";
 
-const CATEGORIES = [
+export const CATEGORIES = [
   "Food & Dining",
   "Groceries",
   "Coffee & Cafes",
@@ -118,6 +119,8 @@ export async function categorizeUncategorized(
   userId: string,
   opts: { limit?: number; credentialId?: string } = {},
 ): Promise<CategorizeReport> {
+  await applyCategoryRules(userId);
+
   // Pick a credential: explicit override > useForAnalysis > isDefault > first.
   const creds = await db.select().from(llmCredentials).where(eq(llmCredentials.userId, userId));
   const cred = opts.credentialId

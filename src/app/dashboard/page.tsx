@@ -20,7 +20,7 @@ export default async function Dashboard() {
   const userId = session.user.id;
 
   const [netWorth, recurring, spending, savingsDestinations, flow, accounts, recent] = await Promise.all([
-    callTool<{ assets: number; liabilities: number; netWorth: number; accountCount: number }>(
+    callTool<{ assets: number; liabilities: number; netWorth: number; accountCount: number; realAssetCount: number }>(
       "get_net_worth", {}, userId,
     ),
     callTool<Array<{ merchant: string; months: number; typicalAmount: number; lastDate: Date; totalCharges: number }>>(
@@ -39,7 +39,7 @@ export default async function Dashboard() {
     callTool<Array<{ period: string; consumption: number; savings: number; income: number; net: number; savingsRate: number | null }>>(
       "get_consumption_vs_savings", { days: 90, groupBy: "month" }, userId,
     ),
-    callTool<Array<{ id: string; name: string; type: string; subtype: string | null; currentBalance: number; mask: string | null; currency: string | null }>>(
+    callTool<Array<{ id: string; name: string; source: string; type: string; subtype: string | null; currentBalance: number; mask: string | null; currency: string | null }>>(
       "get_accounts", {}, userId,
     ),
     callTool<Array<{ id: string; date: Date | string; amount: number; name: string; merchant: string | null; category: string | null; pending: boolean; currency: string | null }>>(
@@ -47,7 +47,7 @@ export default async function Dashboard() {
     ),
   ]);
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && netWorth.realAssetCount === 0) {
     return (
       <>
         <AppBar title="Overview" />
@@ -246,10 +246,11 @@ export default async function Dashboard() {
             <h2 className="coffer-serif mt-1 text-2xl">Account summary</h2>
             <ul className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {accounts.slice(0, 8).map((a) => (
-                <li key={a.id} className="rounded-2xl border border-white/5 bg-surface-container px-4 py-3">
+                <li key={a.id} className="rounded-2xl border border-outline-variant bg-surface-container px-4 py-3">
                   <div className="min-w-0">
                     <div className="body-m truncate text-on-surface">
                       {a.name}
+                      {a.source === "manual" && <span className="badge ml-2">Manual</span>}
                       {a.mask && (
                         <span className="ml-2 font-mono text-xs text-on-surface-variant">··{a.mask}</span>
                       )}
@@ -271,7 +272,7 @@ export default async function Dashboard() {
         </section>
 
         <div className="flex items-center justify-between pt-2 pb-4">
-          <span className="body-s text-on-surface-variant">Data: SimpleFIN · queried on each load</span>
+          <span className="body-s text-on-surface-variant">Data: SimpleFIN + manual accounts · queried on each load</span>
           <Link href="/chat" className="btn btn-text">
             Ask the chat about any of this
             <ArrowUpRight size={16} strokeWidth={2} />
@@ -453,10 +454,10 @@ function TransactionTimeline({
     );
   }
   return (
-    <ol className="relative mt-5 space-y-4 border-l border-white/10 pl-4">
+    <ol className="relative mt-5 space-y-4 border-l border-outline-variant pl-4">
       {rows.slice(0, 5).map((row, index) => {
         const isIncome = row.amount > 0;
-        const dot = isIncome ? "bg-success" : index === 0 ? "bg-primary" : "bg-surface-container border border-white/20";
+        const dot = isIncome ? "bg-success" : index === 0 ? "bg-primary" : "bg-surface-container border border-outline-variant";
         return (
           <li key={row.id} className="relative">
             <span className={`absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-surface-low ${dot}`} />

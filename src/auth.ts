@@ -9,6 +9,9 @@ import { db } from "@/lib/db/client";
 import { users, accounts, sessions, verificationTokens } from "@/lib/db/schema";
 import { authConfig } from "@/auth.config";
 import { impersonationEmailFor } from "@/lib/devImpersonation";
+import { clearRateLimit, rateLimitAttempt, type RateLimitStore } from "@/lib/auth/rateLimit";
+
+const loginAttemptsByEmail: RateLimitStore = new Map();
 
 const nextAuth = NextAuth({
   ...authConfig,
@@ -29,10 +32,12 @@ const nextAuth = NextAuth({
         const email = String(credentials?.email ?? "").toLowerCase().trim();
         const password = String(credentials?.password ?? "");
         if (!email || !password) return null;
+        if (!rateLimitAttempt(loginAttemptsByEmail, email)) return null;
         const [u] = await db.select().from(users).where(eq(users.email, email)).limit(1);
         if (!u || !u.passwordHash) return null;
         const ok = await bcrypt.compare(password, u.passwordHash);
         if (!ok) return null;
+        clearRateLimit(loginAttemptsByEmail, email);
         return { id: u.id, email: u.email, name: u.name };
       },
     }),

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DataTable, Th, Td, Tr, Thead } from "@/components/DataTable";
 import { Plus, RefreshCw, Sparkles, History } from "lucide-react";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Institution = { name: string; domain: string | null; accounts: number };
 type Item = {
@@ -49,6 +50,7 @@ type CategorizeJobResponse = {
 };
 
 export function ConnectionsClient({ items, llms }: { items: Item[]; llms: Llm[] }) {
+  const confirm = useConfirm();
   const analysisDefault =
     llms.find((l) => l.useForAnalysis)?.id ?? llms.find((l) => l.isDefault)?.id ?? llms[0]?.id ?? "";
   const [analysisModel, setAnalysisModel] = useState(analysisDefault);
@@ -104,14 +106,15 @@ export function ConnectionsClient({ items, llms }: { items: Item[]; llms: Llm[] 
   };
 
   const disconnect = async (id: string, hard = false) => {
-    if (
-      !confirm(
-        hard
-          ? "Hard-delete all data from this connection? This cannot be undone."
-          : "Disconnect this connection? Data will be purged automatically in 30 days.",
-      )
-    )
-      return;
+    const body = hard
+      ? "Hard-delete all data from this connection? This cannot be undone."
+      : "Disconnect this connection? Data will be purged automatically in 30 days.";
+    const ok = await confirm({
+      title: hard ? "Hard-delete connection?" : "Disconnect connection?",
+      body,
+      confirmLabel: hard ? "Hard-delete" : "Disconnect",
+    });
+    if (!ok) return;
     await fetch(`/api/simplefin/disconnect/${id}`, { method: hard ? "DELETE" : "POST" });
     router.refresh();
   };

@@ -1,6 +1,7 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { financialAccounts, netWorthSnapshots, users } from "@/lib/db/schema";
+import { listRealAssetsForUser } from "@/lib/real-assets/data";
 
 /**
  * Insert today's net-worth snapshot for one user. Idempotent (one per day);
@@ -12,6 +13,7 @@ export async function snapshotNetWorthForUser(userId: string) {
     .select()
     .from(financialAccounts)
     .where(eq(financialAccounts.userId, userId));
+  const realAssetRows = await listRealAssetsForUser(userId);
 
   let assets = 0;
   let liabilities = 0;
@@ -22,6 +24,13 @@ export async function snapshotNetWorthForUser(userId: string) {
     else if (a.type === "credit" || a.type === "loan") liabilities += Math.abs(bal);
     const g = a.userAccountGroup ?? a.accountGroup;
     byGroup[g] = (byGroup[g] ?? 0) + bal;
+  }
+  for (const asset of realAssetRows) {
+    if (asset.status !== "active" || !asset.currentValue) continue;
+    const value = asset.currentValue.value;
+    assets += value;
+    const g = asset.kind === "other" ? "other assets" : asset.kind;
+    byGroup[g] = (byGroup[g] ?? 0) + value;
   }
   const net = assets - liabilities;
 
@@ -59,7 +68,3 @@ export async function snapshotAllUsers() {
     }
   }
 }
-
-// keep referenced exports clean
-void sql;
-void and;

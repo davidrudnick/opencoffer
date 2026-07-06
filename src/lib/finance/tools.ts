@@ -28,6 +28,7 @@ import {
   type SpendingKind,
 } from "@/lib/finance/display";
 import { categorizeUncategorized, recategorizeAll } from "@/lib/finance/categorize";
+import { listRealAssetsForUser } from "@/lib/real-assets/data";
 
 const ACCOUNT_GROUPS = ["cash", "credit", "retirement", "brokerage", "hsa", "loan", "other"] as const;
 type AccountGroup = (typeof ACCOUNT_GROUPS)[number];
@@ -147,7 +148,7 @@ export type FinanceTool<TSchema extends z.ZodTypeAny = z.ZodTypeAny> = {
 const getAccounts: FinanceTool = {
   name: "get_accounts",
   description:
-    "List the user's connected financial accounts with balances. Each account has `type` (depository/credit/investment/loan) and `group` (cash/credit/retirement/brokerage/hsa/loan/other). Use `group` for analysis — e.g. 'cash' = spendable checking+savings, 'retirement' = 401k/IRA/HSA-like, 'brokerage' = taxable investments.",
+    "List the user's financial accounts with balances, including SimpleFIN-synced and manual accounts. Each account has `source`, `type` (depository/credit/investment/loan) and `group` (cash/credit/retirement/brokerage/hsa/loan/other). Use `group` for analysis — e.g. 'cash' = spendable checking+savings, 'retirement' = 401k/IRA/HSA-like, 'brokerage' = taxable investments.",
   schema: z.object({}).strict(),
   execute: async (_args, { userId }) => {
     const ids = await householdUserIds(userId);
@@ -160,6 +161,7 @@ const getAccounts: FinanceTool = {
       name: a.name,
       officialName: a.officialName,
       mask: a.mask,
+      source: a.source,
       type: a.type,
       subtype: a.subtype,
       group: effectiveGroup(a),
@@ -431,14 +433,17 @@ const getRecurringMerchants: FinanceTool = {
 const getNetWorth: FinanceTool = {
   name: "get_net_worth",
   description:
-    "Compute net worth by summing depository + investment account balances and subtracting credit + loan balances.",
+    "Compute net worth by summing depository + investment account balances plus real assets, then subtracting credit + loan balances.",
   schema: z.object({}).strict(),
   execute: async (_args, { userId }) => {
     const ids = await householdUserIds(userId);
-    const rows = await db
-      .select()
-      .from(financialAccounts)
-      .where(inArray(financialAccounts.userId, ids));
+    const [rows, realAssetRows] = await Promise.all([
+      db
+        .select()
+        .from(financialAccounts)
+        .where(inArray(financialAccounts.userId, ids)),
+      listRealAssetsForUser(userId),
+    ]);
     const assetsTypes = new Set(["depository", "investment"]);
     const liabilityTypes = new Set(["credit", "loan"]);
     let assets = 0;
@@ -450,11 +455,15 @@ const getNetWorth: FinanceTool = {
       // Convert to positive "amount owed" for the user-facing liabilities figure.
       else if (liabilityTypes.has(a.type)) liabilities += Math.abs(bal);
     }
+    for (const asset of realAssetRows) {
+      if (asset.status === "active" && asset.currentValue) assets += asset.currentValue.value;
+    }
     return {
       assets,
       liabilities,
       netWorth: assets - liabilities,
       accountCount: rows.length,
+      realAssetCount: realAssetRows.filter((asset) => asset.status === "active" && asset.currentValue).length,
       asOf: new Date(),
     };
   },
@@ -1200,19 +1209,30 @@ const chartBalancesByType: FinanceTool = {
 const getBalancesByGroup: FinanceTool = {
   name: "get_balances_by_group",
   description:
-    "Total balance per account group (cash / credit / retirement / brokerage / hsa / loan / other). Use this to understand 'how much cash do I have available', 'how much is locked in retirement', 'how much is in brokerage vs HSA'. Returns absolute values; credit/loan are owed (debt).",
+    "Total balance per account group (cash / credit / retirement / brokerage / hsa / loan / other / home / vehicle / land / other assets). Use this to understand 'how much cash do I have available', 'how much is locked in retirement', or how real assets contribute to net worth. Returns absolute values; credit/loan are owed (debt).",
   schema: z.object({}).strict(),
   execute: async (_args, { userId }) => {
     const ids = await householdUserIds(userId);
-    const rows = await db
-      .select()
-      .from(financialAccounts)
-      .where(inArray(financialAccounts.userId, ids));
+    const [rows, realAssetRows] = await Promise.all([
+      db
+        .select()
+        .from(financialAccounts)
+        .where(inArray(financialAccounts.userId, ids)),
+      listRealAssetsForUser(userId),
+    ]);
     const byGroup = new Map<string, { balance: number; accounts: number }>();
     for (const a of rows) {
       const g = effectiveGroup(a);
       const e = byGroup.get(g) ?? { balance: 0, accounts: 0 };
       e.balance += num(a.currentBalance);
+      e.accounts += 1;
+      byGroup.set(g, e);
+    }
+    for (const asset of realAssetRows) {
+      if (asset.status !== "active" || !asset.currentValue) continue;
+      const g = asset.kind === "other" ? "other assets" : asset.kind;
+      const e = byGroup.get(g) ?? { balance: 0, accounts: 0 };
+      e.balance += asset.currentValue.value;
       e.accounts += 1;
       byGroup.set(g, e);
     }

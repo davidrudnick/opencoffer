@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { DataTable, Th, Td, Tr, Thead } from "@/components/DataTable";
 import { Plus, Copy, Check } from "lucide-react";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 type Token = {
   id: string;
@@ -14,6 +15,7 @@ type Token = {
 };
 
 export function McpClient({ initial, endpoint }: { initial: Token[]; endpoint: string }) {
+  const confirm = useConfirm();
   const [tokens, setTokens] = useState(initial);
   const [label, setLabel] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -33,7 +35,12 @@ export function McpClient({ initial, endpoint }: { initial: Token[]; endpoint: s
   };
 
   const revoke = async (id: string) => {
-    if (!confirm("Revoke this token? Any agent using it will lose access immediately.")) return;
+    const ok = await confirm({
+      title: "Revoke token?",
+      body: "Revoke this token? Any agent using it will lose access immediately.",
+      confirmLabel: "Revoke",
+    });
+    if (!ok) return;
     await fetch(`/api/settings/mcp/${id}`, { method: "DELETE" });
     setTokens((ts) =>
       ts.map((t) => (t.id === id ? { ...t, revokedAt: new Date().toISOString() } : t)),

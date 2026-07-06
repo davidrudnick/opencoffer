@@ -11,9 +11,11 @@ import { db } from "@/lib/db/client";
 import { connections, auditLog } from "@/lib/db/schema";
 import { syncConnection } from "@/lib/simplefin/sync";
 import { categorizeUncategorized } from "@/lib/finance/categorize";
-import { snapshotNetWorthForUser } from "@/lib/finance/netWorthSnapshot";
+import { snapshotAllUsers, snapshotNetWorthForUser } from "@/lib/finance/netWorthSnapshot";
 import { evaluateAlerts } from "@/lib/finance/alerts";
 import { generateInsights } from "@/lib/finance/insights";
+import { refreshAllRealAssets } from "@/lib/real-assets/refresh";
+import { deliverPendingAlerts } from "@/lib/notifications/deliver";
 
 async function runFrequentSync() {
   const items = await db.select().from(connections).where(eq(connections.status, "active"));
@@ -47,6 +49,12 @@ async function runFrequentSync() {
       console.error(`[worker] alerts failed for ${uid}:`, e);
     }
     try {
+      const delivered = await deliverPendingAlerts(uid);
+      if (delivered.alerts > 0) console.log(`[worker] alert delivery for ${uid}:`, delivered);
+    } catch (e) {
+      console.error(`[worker] alert delivery failed for ${uid}:`, e);
+    }
+    try {
       await generateInsights(uid);
     } catch (e) {
       console.error(`[worker] insights failed for ${uid}:`, e);
@@ -72,11 +80,33 @@ async function runRetentionPurge() {
   }
 }
 
-const syncCron =
-  process.env.OPENCOFFER_SYNC_CRON || process.env["OPEN" + "FINANCE_SYNC_CRON"] || "*/30 * * * *";
+async function runAssetRefresh() {
+  try {
+    const result = await refreshAllRealAssets();
+    console.log("[worker] real asset refresh:", result);
+    for (const userId of result.refreshedUserIds) {
+      try {
+        await snapshotNetWorthForUser(userId);
+      } catch (e) {
+        console.error(`[worker] asset snapshot failed for ${userId}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error("[worker] real asset refresh failed:", e);
+  }
+}
+
+async function runDailySnapshots() {
+  await snapshotAllUsers();
+}
+
+const syncCron = process.env.OPENCOFFER_SYNC_CRON || process.env.OPENFINANCE_SYNC_CRON || "*/30 * * * *";
+const assetRefreshCron = process.env.OPENCOFFER_ASSET_REFRESH_CRON || "0 3 * * 0";
 cron.schedule(syncCron, runFrequentSync); // every 30 min by default
 cron.schedule("0 * * * *", runRetentionPurge); // top of every hour
+cron.schedule(assetRefreshCron, runAssetRefresh); // weekly by default
+cron.schedule("15 0 * * *", runDailySnapshots); // daily snapshot for all users
 
-console.log(`[worker] started (sync cron: ${syncCron})`);
+console.log(`[worker] started (sync cron: ${syncCron}; asset refresh cron: ${assetRefreshCron})`);
 // Keep the process alive even if cron has no immediate work.
 setInterval(() => {}, 1 << 30);

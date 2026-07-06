@@ -1,6 +1,14 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { financialAccounts, transactions, netWorthSnapshots } from "@/lib/db/schema";
+import { financialAccounts, transactions, netWorthSnapshots, realAssets, realAssetValues } from "@/lib/db/schema";
+import { selectAssetValueAt } from "@/lib/real-assets/valuation";
+
+export function localDayKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 /**
  * Build historical net-worth snapshots from current balances + transaction
@@ -20,7 +28,23 @@ export async function backfillNetWorth(userId: string, days = 180) {
     .select()
     .from(financialAccounts)
     .where(eq(financialAccounts.userId, userId));
-  if (accts.length === 0) return { snapshotsWritten: 0, days };
+  const assetsRows = await db
+    .select()
+    .from(realAssets)
+    .where(eq(realAssets.userId, userId));
+  if (accts.length === 0 && assetsRows.length === 0) return { snapshotsWritten: 0, days };
+  const assetValueRows = assetsRows.length > 0
+    ? await db
+        .select()
+        .from(realAssetValues)
+        .where(inArray(realAssetValues.assetId, assetsRows.map((asset) => asset.id)))
+    : [];
+  const valuesByAsset = new Map<string, typeof assetValueRows>();
+  for (const value of assetValueRows) {
+    const bucket = valuesByAsset.get(value.assetId) ?? [];
+    bucket.push(value);
+    valuesByAsset.set(value.assetId, bucket);
+  }
 
   // Per-account running balance (mutated as we walk backward).
   const liveBalances = new Map<string, number>(accts.map((a) => [a.id, Number(a.currentBalance ?? 0)]));
@@ -60,7 +84,7 @@ export async function backfillNetWorth(userId: string, days = 180) {
   // Iterate from today backward `days` days inclusive.
   for (let offset = 0; offset <= days; offset++) {
     const d = new Date(today.getTime() - offset * 86400_000);
-    const dayKey = d.toISOString().slice(0, 10);
+    const dayKey = localDayKey(d);
 
     // Compute totals at end-of-day d.
     let assets = 0;
@@ -72,6 +96,14 @@ export async function backfillNetWorth(userId: string, days = 180) {
       else if (a.type === "credit" || a.type === "loan") liabilities += Math.abs(bal);
       const g = a.userAccountGroup ?? a.accountGroup;
       byGroup[g] = (byGroup[g] ?? 0) + bal;
+    }
+    for (const asset of assetsRows) {
+      if (asset.status !== "active") continue;
+      const value = selectAssetValueAt(asset, valuesByAsset.get(asset.id) ?? [], d);
+      if (!value) continue;
+      assets += value.value;
+      const g = asset.kind === "other" ? "other assets" : asset.kind;
+      byGroup[g] = (byGroup[g] ?? 0) + value.value;
     }
     await db
       .insert(netWorthSnapshots)

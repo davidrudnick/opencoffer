@@ -27,7 +27,9 @@ OpenCoffer is read-only against your financial accounts. It syncs through [Simpl
 ## Features
 
 - **Bank & brokerage sync** via SimpleFIN — one-token setup, encrypted access URLs.
-- **Net worth, cash flow, spending, subscriptions, holdings, budgets, alerts, saved charts** — all deterministic, all generated from your database.
+- **Net worth, cash flow, spending, subscriptions, holdings, real assets, budgets, alerts, saved charts** — all deterministic, all generated from your database.
+- **Deterministic transaction rules** — create merchant/name matching rules from transactions before AI categorization runs.
+- **Alert push notifications** — deliver in-app alerts to ntfy, Discord, Slack, or a generic webhook.
 - **Bring your own LLM** — OpenAI, Anthropic, any OpenAI-compatible provider, ChatGPT subscription auth, local Ollama, or a self-hosted endpoint.
 - **Persistent chat with finance tools** — model picker, conversation history, category fixes, deterministic chart tools the LLM can call.
 - **Background worker** — automatic sync, categorization, insight refresh, and net-worth snapshots on a cron you control.
@@ -124,9 +126,14 @@ All configuration lives in `.env` (Docker) or `.env.local` (dev). See [`.env.exa
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `NEXTAUTH_SECRET` | Yes | Auth.js session secret — `openssl rand -base64 32` |
 | `NEXTAUTH_URL` | Yes | Public URL of the web app |
+| `DISABLE_REGISTRATION` | No | Set to `1` to block new registrations after the first user exists |
 | `APP_ENCRYPTION_KEY` | Yes | 32-byte base64 key for at-rest encryption of secrets |
 | `APP_URL` | Yes | Used in MCP setup snippets shown in the UI |
 | `OPENCOFFER_SYNC_CRON` | No | Worker sync cadence (default `*/30 * * * *`) |
+| `OPENCOFFER_ASSET_REFRESH_CRON` | No | Real-asset market valuation cadence (default weekly) |
+| `RENTCAST_API_KEY` | No | Home/land market estimates through RentCast AVM |
+| `AUTO_DEV_API_KEY` | No | Vehicle comparable-listing estimates through Auto.dev |
+| `MARKETCHECK_API_KEY` | No | Optional direct vehicle valuation through MarketCheck; may incur provider data fees |
 | `OLLAMA_BASE_URL` | No | Pre-seeded base URL when using the bundled Ollama profile |
 
 ### LLM setup
@@ -169,6 +176,16 @@ This works for both the in-app chat and the background analysis model (categoriz
 OpenCoffer uses [SimpleFIN](https://www.simplefin.org/) for read-only bank and brokerage data. There are no app-wide credentials — each user pastes their own setup token in **Settings → Connections**. The token is claimed once; the resulting access URL is encrypted with `APP_ENCRYPTION_KEY`.
 
 Disconnecting a connection marks it for purge after 30 days. Hard-delete removes it immediately.
+
+### Notifications and rules
+
+Open **Transactions → Rules** to create deterministic category rules from existing transactions. Rules run before background AI categorization, and matching transactions receive manual override categories.
+
+Open **Settings → Notifications** to add per-user ntfy, Discord, Slack, or webhook channels for alerts. Channel URLs and tokens are encrypted with `APP_ENCRYPTION_KEY`; no extra environment variables are required.
+
+### Real assets
+
+Open **Dashboard → Assets** to add homes, vehicles, land, or other property. Manual values are always supported and are included in net worth immediately. If provider keys are configured, homes and land can refresh from RentCast, vehicles can decode VIN metadata from NHTSA, and vehicle values can refresh from Auto.dev listing comparables or MarketCheck direct valuation.
 
 ## MCP
 

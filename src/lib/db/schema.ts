@@ -146,8 +146,8 @@ export const financialAccounts = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     connectionId: uuid("connection_id")
-      .notNull()
       .references(() => connections.id, { onDelete: "cascade" }),
+    source: text("source").notNull().default("simplefin"),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -229,6 +229,23 @@ export const transactions = pgTable(
     index("transactions_user_date_idx").on(t.userId, t.date),
     index("transactions_account_date_idx").on(t.accountId, t.date),
   ],
+);
+
+export const categoryRules = pgTable(
+  "category_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    field: text("field").notNull(), // merchant | name
+    matchType: text("match_type").notNull(), // contains | equals
+    pattern: text("pattern").notNull(),
+    category: text("category").notNull(),
+    subcategory: text("subcategory"),
+    enabled: boolean("enabled").notNull().default(true),
+    appliedCount: integer("applied_count").notNull().default(0),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("category_rules_user_idx").on(t.userId)],
 );
 
 export const securities = pgTable(
@@ -379,6 +396,53 @@ export const netWorthSnapshots = pgTable(
   (t) => [uniqueIndex("nw_snap_user_day_idx").on(t.userId, t.snapshotDate)],
 );
 
+/* ---------- Real assets: homes, vehicles, land, and other property ---------- */
+
+export const realAssets = pgTable(
+  "real_assets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    /** home | vehicle | land | other */
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    /** active | sold | archived */
+    status: text("status").notNull().default("active"),
+    /** manual | provider */
+    valuationMode: text("valuation_mode").notNull().default("manual"),
+    purchasePrice: numeric("purchase_price", { precision: 19, scale: 4 }),
+    purchaseDate: timestamp("purchase_date", { mode: "date" }),
+    isoCurrencyCode: text("iso_currency_code").notNull().default("USD"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("real_assets_user_status_idx").on(t.userId, t.status)],
+);
+
+export const realAssetValues = pgTable(
+  "real_asset_values",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    assetId: uuid("asset_id").notNull().references(() => realAssets.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    value: numeric("value", { precision: 19, scale: 4 }).notNull(),
+    isoCurrencyCode: text("iso_currency_code").notNull().default("USD"),
+    /** manual | rentcast | realie | auto_dev | marketcheck */
+    source: text("source").notNull(),
+    /** manual_entry | avm | comparable_estimate | direct_vehicle_value */
+    sourceKind: text("source_kind").notNull(),
+    asOf: timestamp("as_of", { mode: "date" }).notNull(),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }),
+    rangeLow: numeric("range_low", { precision: 19, scale: 4 }),
+    rangeHigh: numeric("range_high", { precision: 19, scale: 4 }),
+    notes: text("notes"),
+    raw: jsonb("raw"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("real_asset_values_asset_asof_idx").on(t.assetId, t.asOf)],
+);
+
 /* ---------- Alerts ---------- */
 
 export const alertRules = pgTable(
@@ -406,9 +470,26 @@ export const alerts = pgTable(
     body: text("body"),
     meta: jsonb("meta"),
     readAt: timestamp("read_at", { mode: "date" }),
+    notifiedAt: timestamp("notified_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [index("alerts_user_idx").on(t.userId, t.createdAt)],
+);
+
+export const notificationChannels = pgTable(
+  "notification_channels",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // ntfy | discord | slack | webhook
+    label: text("label").notNull(),
+    configCipher: text("config_cipher").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    lastSuccessAt: timestamp("last_success_at", { mode: "date" }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("notification_channels_user_idx").on(t.userId)],
 );
 
 /* ---------- Assistant long-term memory ----------
@@ -498,5 +579,9 @@ export type McpToken = typeof mcpTokens.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type FinancialAccount = typeof financialAccounts.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
+export type CategoryRule = typeof categoryRules.$inferSelect;
 export type Holding = typeof holdings.$inferSelect;
 export type Security = typeof securities.$inferSelect;
+export type RealAsset = typeof realAssets.$inferSelect;
+export type RealAssetValue = typeof realAssetValues.$inferSelect;
+export type NotificationChannel = typeof notificationChannels.$inferSelect;
