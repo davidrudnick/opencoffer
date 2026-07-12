@@ -136,6 +136,97 @@ test("app integration", { skip: !ENABLED ? "run via scripts/test-mcp.mjs" : fals
     assert.equal(byGroup.cash, 1000);
   });
 
+  await t.test("evaluateAlerts: card_dormant flags unused cards + fees, spares active ones", async () => {
+    const { evaluateAlerts } = await import("@/lib/finance/alerts");
+    const u = await mkUser("dormant@test.local");
+    const d = (n: number) => new Date(Date.now() - n * 86400_000);
+    const dormant = await mkAcct(u.id, { name: "Dusty Card (0001)", type: "credit", accountGroup: "credit" });
+    const active = await mkAcct(u.id, { name: "Daily Card (0002)", type: "credit", accountGroup: "credit" });
+    await mkAcct(u.id, { name: "Regrouped Dormant (0003)", type: "depository", accountGroup: "cash", userAccountGroup: "credit" });
+    await mkAcct(u.id, { name: "Checking (0004)", type: "depository", accountGroup: "cash" }); // never dormancy-checked
+    // Dusty card: old purchase + recent fee + recent transfer — still dormant.
+    await mkTx(u.id, dormant.id, { amount: "-45", name: "OLD PURCHASE", date: d(200) });
+    await mkTx(u.id, dormant.id, { amount: "-95", name: "ANNUAL FEE 2026", date: d(30) });
+    await mkTx(u.id, dormant.id, { amount: "300", name: "Payment Thank You", isTransfer: true, date: d(10) });
+    // Daily card: real purchase last week.
+    await mkTx(u.id, active.id, { amount: "-12", name: "COFFEE", date: d(7) });
+    // Regrouped card: no purchases at all.
+    await db.insert(s.alertRules).values({ userId: u.id, kind: "card_dormant", threshold: "90", enabled: true });
+
+    await evaluateAlerts(u.id);
+    const alerts = await db.select().from(s.alerts).where(and(eq(s.alerts.userId, u.id), eq(s.alerts.kind, "card_dormant")));
+    const titles = alerts.map((a) => a.title).sort();
+    assert.equal(alerts.length, 2, `dormant + regrouped alert, active spared: ${titles.join(" | ")}`);
+    assert.ok(titles.some((x) => x.includes("Dusty Card")), "fee posting and transfer don't count as usage");
+    assert.ok(titles.some((x) => x.includes("Regrouped Dormant")), "group override includes card in dormancy scan");
+    const dusty = alerts.find((a) => a.title.includes("Dusty Card"))!;
+    assert.match(dusty.body ?? "", /\$95.*annual\/membership fee/i, "fee amount surfaced in alert body");
+
+    await evaluateAlerts(u.id);
+    const after = await db.select().from(s.alerts).where(and(eq(s.alerts.userId, u.id), eq(s.alerts.kind, "card_dormant")));
+    assert.equal(after.length, 2, "monthly dedupe holds on re-evaluation");
+  });
+
+  await t.test("digest: builder, per-channel opt-in, emit dedupe", async () => {
+    process.env.APP_ENCRYPTION_KEY ??= Buffer.alloc(32, 9).toString("base64");
+    const { buildDigestForUser, userWantsDigest, emitDigests } = await import("@/lib/notifications/digest");
+    const { encrypt } = await import("@/lib/crypto");
+    const u = await mkUser("digest@test.local");
+    const a = await mkAcct(u.id, { name: "Digest Checking", currentBalance: "500" });
+    await mkTx(u.id, a.id, { amount: "2000", name: "PAYROLL", aiCategory: "Income — Salary", date: new Date() });
+    await mkTx(u.id, a.id, { amount: "-120", name: "GROCER", merchantName: "Grocer", aiCategory: "Groceries", date: new Date() });
+
+    const digest = await buildDigestForUser(u.id);
+    assert.match(digest.body, /In: \$2,000/);
+    assert.match(digest.body, /Spent: \$120/);
+    assert.match(digest.body, /Grocer \$120/);
+    assert.match(digest.body, /Net worth: \$500/);
+
+    assert.equal(await userWantsDigest(u.id), false, "no channels yet");
+    await db.insert(s.notificationChannels).values({
+      userId: u.id, kind: "pushover", label: "phone",
+      configCipher: encrypt(JSON.stringify({ url: "https://api.pushover.net/1/messages.json", authToken: "t", userKey: "u", digest: true })),
+    });
+    assert.equal(await userWantsDigest(u.id), true, "digest-enabled channel detected");
+
+    const first = await emitDigests();
+    assert.ok(first.emittedUserIds.includes(u.id));
+    const second = await emitDigests();
+    assert.ok(!second.emittedUserIds.includes(u.id), "20h dedupe prevents double digests");
+    const rows = await db.select().from(s.alerts).where(and(eq(s.alerts.userId, u.id), eq(s.alerts.kind, "digest")));
+    assert.equal(rows.length, 1);
+  });
+
+  await t.test("cleanPendingTransactions: 1:1 ghost pairing + stale expiry", async () => {
+    const { cleanPendingTransactions } = await import("@/lib/finance/pendingHygiene");
+    const u = await mkUser("hygiene@test.local");
+    const a = await mkAcct(u.id, { name: "Hygiene Card", type: "credit", accountGroup: "credit" });
+    const d = (n: number) => new Date(Date.now() - n * 86400_000);
+    // Ghost: pending -42 with a posted -42 twin two days later → delete pending.
+    const ghost = await mkTx(u.id, a.id, { amount: "-42", name: "CAFE PENDING", pending: true, date: d(4) });
+    await mkTx(u.id, a.id, { amount: "-42", name: "CAFE", pending: false, date: d(2) });
+    // Two identical pendings, ONE posted twin → exactly one pending deleted.
+    const twinA = await mkTx(u.id, a.id, { amount: "-10", name: "CREDIT A", pending: true, date: d(3) });
+    const twinB = await mkTx(u.id, a.id, { amount: "-10", name: "CREDIT B", pending: true, date: d(3) });
+    await mkTx(u.id, a.id, { amount: "-10", name: "CREDIT POSTED", pending: false, date: d(2) });
+    // Stale: pending from 30 days ago, no twin → expired.
+    const stale = await mkTx(u.id, a.id, { amount: "-77", name: "GHOST OF JUNE", pending: true, date: d(30) });
+    // Fresh unmatched pending → kept.
+    const fresh = await mkTx(u.id, a.id, { amount: "-5", name: "FRESH PENDING", pending: true, date: d(1) });
+
+    const result = await cleanPendingTransactions(u.id);
+    assert.equal(result.removedDuplicates, 2, "ghost + exactly one of the twins");
+    assert.equal(result.removedStale, 1, "june ghost expired");
+    const left = await db.select().from(s.transactions).where(and(eq(s.transactions.userId, u.id), eq(s.transactions.pending, true)));
+    const names = left.map((r) => r.name).sort();
+    assert.equal(left.length, 2, `fresh + one twin remain: ${names.join(", ")}`);
+    assert.ok(names.includes("FRESH PENDING"));
+    assert.ok(!left.some((r) => r.id === ghost.id));
+    assert.ok(!left.some((r) => r.id === stale.id));
+    assert.equal([twinA.id, twinB.id].filter((id) => left.some((r) => r.id === id)).length, 1, "1:1 pairing spared one twin");
+    assert.ok(left.some((r) => r.id === fresh.id));
+  });
+
   await t.test("authenticateMcpToken: valid, revoked, garbage", async () => {
     const { authenticateMcpToken } = await import("@/lib/mcp/server");
     const { generateToken } = await import("@/lib/crypto");

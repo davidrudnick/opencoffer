@@ -26,6 +26,7 @@ export async function evaluateAlerts(userId: string) {
       if (rule.kind === "large_tx") await evaluateLargeTx(userId, rule);
       else if (rule.kind === "category_overspend") await evaluateOverspend(userId, rule);
       else if (rule.kind === "low_balance") await evaluateLowBalance(userId, rule);
+      else if (rule.kind === "card_dormant") await evaluateCardDormant(userId, rule);
     } catch (e) {
       console.error("[alerts] rule eval failed", rule.id, e);
     }
@@ -138,6 +139,73 @@ async function evaluateOverspend(userId: string, rule: typeof alertRules.$inferS
       body: `You hit your monthly ${rule.category} budget on ${new Date().toLocaleDateString()}.`,
       meta: { category: rule.category, spent: total, budget: cap },
       dedupeKey: `overspend:${rule.category}:${monthStart.toISOString().slice(0, 7)}`,
+    });
+  }
+}
+
+/** Fee postings shouldn't count as "using" a card, and are worth calling out. */
+const FEE_NAME_SQL = sql`(${transactions.name} ilike '%membership fee%' or ${transactions.name} ilike '%annual fee%')`;
+
+/**
+ * card_dormant: alert when a credit-group card has had no real purchase for
+ * `threshold` days (default 90; the notification window is user-configurable
+ * per rule). Fee postings, transfers, and pending rows don't count as usage.
+ * If the card charged an annual/membership fee in the last 400 days, the
+ * alert calls it out — a dormant card with a fee is money on fire.
+ * Re-alerts at most once per calendar month per card while dormant.
+ */
+async function evaluateCardDormant(userId: string, rule: typeof alertRules.$inferSelect) {
+  const days = Number(rule.threshold ?? 90);
+  const cutoff = new Date(Date.now() - days * 86400_000);
+  const accts = (
+    await db.select().from(financialAccounts).where(eq(financialAccounts.userId, userId))
+  ).filter(
+    (a) =>
+      (a.userAccountGroup ?? a.accountGroup) === "credit" &&
+      (!rule.accountId || a.id === rule.accountId),
+  );
+
+  for (const acct of accts) {
+    const [lastPurchase] = await db
+      .select({ date: sql<Date | null>`max(${transactions.date})` })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.accountId, acct.id),
+          sql`${transactions.amount} < 0`,
+          eq(transactions.pending, false),
+          sql`${effectiveIsTransferSQL()} = false`,
+          sql`not ${FEE_NAME_SQL}`,
+        ),
+      );
+    const last = lastPurchase?.date ? new Date(lastPurchase.date) : null;
+    if (last && last >= cutoff) continue;
+
+    const [fee] = await db
+      .select({ date: transactions.date, amount: transactions.amount, name: transactions.name })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.accountId, acct.id),
+          FEE_NAME_SQL,
+          gte(transactions.date, new Date(Date.now() - 400 * 86400_000)),
+        ),
+      )
+      .orderBy(desc(transactions.date))
+      .limit(1);
+
+    const lastLabel = last ? `Last purchase ${last.toISOString().slice(0, 10)}.` : "No purchases on record.";
+    const feeLabel = fee
+      ? ` Charged a ${Math.abs(Number(fee.amount)) > 0 ? `$${Math.abs(Number(fee.amount)).toLocaleString()} ` : ""}annual/membership fee on ${new Date(fee.date).toISOString().slice(0, 10)} — consider downgrading or canceling.`
+      : "";
+    await emit({
+      userId,
+      ruleId: rule.id,
+      kind: "card_dormant",
+      title: `Dormant card: ${acct.name} — no purchases in ${days}+ days`,
+      body: `${lastLabel}${feeLabel}`,
+      meta: { accountId: acct.id, days, lastPurchase: last?.toISOString() ?? null, feeDate: fee ? new Date(fee.date).toISOString() : null },
+      dedupeKey: `dormant:${acct.id}:${new Date().toISOString().slice(0, 7)}`,
     });
   }
 }

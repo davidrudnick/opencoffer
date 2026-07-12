@@ -127,6 +127,17 @@ test("notifications: buildNotificationRequest payloads", async () => {
   assert.equal(payload.title, alert.title);
   assert.equal(payload.severity, "large_tx");
   assert.equal(payload.createdAt, "2026-07-11T00:00:00.000Z");
+
+  const push = buildNotificationRequest(
+    { kind: "pushover", config: { url: "", authToken: "app-token", userKey: "user-key" } },
+    alert,
+  );
+  assert.equal(push.url, "https://api.pushover.net/1/messages.json", "empty url falls back to the official endpoint");
+  const pushBody = JSON.parse(push.body);
+  assert.equal(pushBody.token, "app-token");
+  assert.equal(pushBody.user, "user-key");
+  assert.equal(pushBody.title, alert.title);
+  assert.equal(pushBody.message, "ACME GARDEN SUPPLY");
 });
 
 test("display: category normalization and outflow classification", async () => {
