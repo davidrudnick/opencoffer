@@ -146,6 +146,14 @@ export async function handleMcpRequest(
     case "tools/list":
       return ok({ tools: TOOL_LIST });
 
+    // We expose no resources or prompts, but some clients probe these
+    // endpoints regardless of declared capabilities — empty lists keep
+    // them quiet instead of surfacing "method not found" warnings.
+    case "resources/list":
+      return ok({ resources: [] });
+    case "prompts/list":
+      return ok({ prompts: [] });
+
     case "tools/call": {
       const params = msg.params as { name?: string; arguments?: unknown } | undefined;
       const name = params?.name;
