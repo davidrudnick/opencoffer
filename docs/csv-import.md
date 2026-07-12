@@ -20,12 +20,13 @@ exist in OpenCoffer (e.g. a closed card), create a manual account first
 ## Canonical format (produce exactly this)
 
 ```csv
-date,amount,name,merchant,category,subcategory
-2024-03-01,-52.18,"WHOLE FOODS MARKET #10236","Whole Foods","Groceries",
-2024-03-01,-4.50,"STARBUCKS STORE 08882","Starbucks","Coffee & Cafes",
-2024-03-02,2841.77,"ACME CORP PAYROLL PPD","Acme Corp","Income — Salary",
-2024-03-03,-1200.00,"ZELLE TO J SMITH RENT MARCH",,"Rent & Mortgage",
-2024-03-04,-89.99,"AMAZON.COM*RT4Y72",,"",
+date,amount,name,merchant,category,subcategory,reference,memo
+2024-03-01,-52.18,"WHOLE FOODS MARKET #10236","Whole Foods","Groceries",,240301001,
+2024-03-01,-4.50,"STARBUCKS STORE 08882","Starbucks","Coffee & Cafes",,240301002,
+2024-03-01,-4.50,"STARBUCKS STORE 08882","Starbucks","Coffee & Cafes",,240301003,
+2024-03-02,2841.77,"ACME CORP PAYROLL PPD","Acme Corp","Income — Salary",,240302001,
+2024-03-03,-1200.00,"ZELLE TO J SMITH RENT MARCH",,"Rent & Mortgage",,240303001,"march rent"
+2024-03-04,-89.99,"AMAZON.COM*RT4Y72",,"",,240304001,
 ```
 
 ### Columns
@@ -38,6 +39,8 @@ date,amount,name,merchant,category,subcategory
 | `merchant` | no | Clean human merchant name if identifiable ("Whole Foods"), else leave empty. |
 | `category` | no | Optional. If provided, use OpenCoffer's categories (list below). If left empty, the AI categorizer fills it in after import — leaving it empty is fine and often better. |
 | `subcategory` | no | Optional free-form lowercase label ("spotify", "rent"). |
+| `reference` | no — **but always provide it when the statement has one** | Statement reference / transaction number, up to 200 chars. Participates in row identity, so identical same-day charges never collapse. If the statement lacks reference numbers, generate a per-file sequence (`240301001`, …) — any stable unique string works. |
+| `memo` | no | Extra statement detail (check numbers, notes), up to 1000 chars. Stored on the transaction's memo field. |
 
 Header names are matched case-insensitively; `date`/`amount`/`name` also
 match aliases (`posted date`, `transaction date` / `amt`, `debit/credit`,
@@ -53,27 +56,35 @@ match aliases (`posted date`, `transaction date` / `amt`, `debit/credit`,
   multiple files; each import call is deduplicated independently, so
   overlapping files are safe.
 
-## ⚠️ Deduplication — the one real gotcha
+## ⚠️ Deduplication
 
-The server derives each row's identity as **`sha256(date | amount | name)`**
-scoped to the target account, and silently skips duplicates. This makes
-re-importing the same file safe (idempotent), **but it also means two
-genuinely different transactions with the same date, amount, AND name
-collapse into one** — e.g. two $4.50 Starbucks charges on the same day.
+Row identity is **`sha256(date | amount | name [| reference])`** scoped to
+the target account; duplicates are silently skipped, which makes
+re-importing the same file (or overlapping files) safe.
 
-**When generating CSVs from statements, make `name` unique for same-day
-same-amount rows** — append the statement's reference/sequence number or a
-counter: `"STARBUCKS STORE 08882 (2)"`. The importer reports
-`inserted` vs `skipped`; if `skipped > 0` on a *fresh* import, look for
-collapsed rows.
+- **With a `reference` column (recommended): nothing legitimate ever
+  collapses.** Two identical same-day $4.50 charges import as two rows
+  because their references differ. Keep references stable across re-imports
+  of the same statement (use the statement's own numbers, or a deterministic
+  sequence — not random values).
+- **Without `reference`:** two genuinely different transactions with the
+  same date, amount, AND name collapse into one. If you can't provide
+  references, uniquify `name` for same-day same-amount rows instead
+  (`"STARBUCKS STORE 08882 (2)"`).
+
+The importer reports `inserted` vs `skipped`; on a *fresh* import,
+`skipped > 0` means rows collapsed — check for missing references.
 
 ## Transfers and credit-card payments
 
 Rows like "PAYMENT THANK YOU" (on a card) or "AUTOPAY TO CHASE CARD" (on
 checking) are internal transfers, not income/spending. Import them anyway —
-**do not omit or re-sign them** — the categorizer marks them `Transfer` so
-aggregates exclude them. On a credit-card statement, the payment appears as
-a POSITIVE amount; keep it positive.
+**do not omit or re-sign them.** The import applies the same deterministic
+transfer heuristic as the live bank sync (plus the AI categorizer's second
+pass), so these rows are excluded from spending/income analytics
+automatically. On a credit-card statement the payment appears as a POSITIVE
+amount; keep it positive — any inflow on a credit account is treated as a
+payment/refund, never income.
 
 ## Standard categories (optional `category` column)
 

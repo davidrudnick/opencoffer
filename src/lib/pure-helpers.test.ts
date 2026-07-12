@@ -140,6 +140,29 @@ test("notifications: buildNotificationRequest payloads", async () => {
   assert.equal(pushBody.message, "ACME GARDEN SUPPLY");
 });
 
+test("import rows: identity derivation and transfer heuristic", async () => {
+  const { externalId, deriveImportIsTransfer } = await import("@/lib/finance/importRows");
+  const base = { date: "2024-03-01", amount: -4.5, name: "STARBUCKS STORE 08882" };
+  assert.equal(externalId(base), externalId({ ...base }), "content identity is deterministic");
+  assert.equal(
+    externalId(base),
+    externalId({ ...base, reference: null }),
+    "null reference keeps the legacy hash (pre-reference imports still dedupe)",
+  );
+  assert.notEqual(
+    externalId({ ...base, reference: "240301002" }),
+    externalId({ ...base, reference: "240301003" }),
+    "distinct references give identical rows distinct identity",
+  );
+  assert.notEqual(externalId(base), externalId({ ...base, amount: -4.51 }));
+
+  assert.equal(deriveImportIsTransfer({ ...base, amount: 500, name: "Payment Thank You - Web" }, "credit"), true);
+  assert.equal(deriveImportIsTransfer({ ...base, name: "CHASE AUTOPAY 9999" }, "depository"), true);
+  assert.equal(deriveImportIsTransfer({ ...base, amount: 120, name: "REFUND AMAZON" }, "credit"), true, "credit inflow is payment/refund");
+  assert.equal(deriveImportIsTransfer(base, "credit"), false, "purchase is not a transfer");
+  assert.equal(deriveImportIsTransfer({ ...base, amount: 3000, name: "ACME PAYROLL" }, "depository"), false);
+});
+
 test("display: category normalization and outflow classification", async () => {
   const d = await import("@/lib/finance/display");
   assert.equal(d.normalizeCategoryName("  "), "Uncategorized");
