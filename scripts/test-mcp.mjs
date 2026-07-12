@@ -41,7 +41,11 @@ if (mig.status !== 0) process.exit(mig.status ?? 1);
 console.log("[test-mcp] running suite");
 const run = spawnSync(
   "node",
-  ["--import", "tsx", "--test", "src/lib/mcp/mcp-tools.test.ts"],
+  [
+    "--import", "tsx", "--test",
+    "src/lib/mcp/mcp-tools.test.ts",
+    "src/lib/finance/app-db.test.ts",
+  ],
   { env, stdio: "inherit" },
 );
 

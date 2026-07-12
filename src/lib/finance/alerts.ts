@@ -7,7 +7,7 @@ import {
   financialAccounts,
   budgets,
 } from "@/lib/db/schema";
-import { effectiveCategorySQL, spendKindWhere } from "@/lib/finance/tools";
+import { effectiveCategorySQL, effectiveIsTransferSQL, spendKindWhere } from "@/lib/finance/tools";
 
 /**
  * Evaluate every active rule for a user and persist any new alerts.
@@ -81,7 +81,7 @@ async function evaluateLargeTx(userId: string, rule: typeof alertRules.$inferSel
         eq(transactions.userId, userId),
         gte(transactions.date, since),
         sql`abs(${transactions.amount}) >= ${threshold}`,
-        eq(transactions.isTransfer, false),
+        sql`${effectiveIsTransferSQL()} = false`,
       ),
     )
     .orderBy(desc(transactions.date))

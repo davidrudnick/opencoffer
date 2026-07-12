@@ -57,7 +57,7 @@ export function effectiveCategorySQL() {
   return sql<string>`coalesce(${transactions.overrideCategory}, ${transactions.aiCategory}, ${transactions.category}, 'Uncategorized')`;
 }
 
-function effectiveIsTransferSQL() {
+export function effectiveIsTransferSQL() {
   return sql<boolean>`coalesce(${transactions.overrideIsTransfer}, ${transactions.isTransfer}, false)`;
 }
 
