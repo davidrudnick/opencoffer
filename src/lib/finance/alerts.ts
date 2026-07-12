@@ -6,6 +6,7 @@ import {
   transactions,
   financialAccounts,
   budgets,
+  connections,
 } from "@/lib/db/schema";
 import { effectiveCategorySQL, effectiveIsTransferSQL, spendKindWhere } from "@/lib/finance/tools";
 
@@ -27,6 +28,7 @@ export async function evaluateAlerts(userId: string) {
       else if (rule.kind === "category_overspend") await evaluateOverspend(userId, rule);
       else if (rule.kind === "low_balance") await evaluateLowBalance(userId, rule);
       else if (rule.kind === "card_dormant") await evaluateCardDormant(userId, rule);
+      else if (rule.kind === "sync_stale") await evaluateSyncStale(userId, rule);
     } catch (e) {
       console.error("[alerts] rule eval failed", rule.id, e);
     }
@@ -208,6 +210,43 @@ async function evaluateCardDormant(userId: string, rule: typeof alertRules.$infe
       dedupeKey: `dormant:${acct.id}:${new Date().toISOString().slice(0, 7)}`,
     });
   }
+}
+
+/**
+ * sync_stale: health check on the SimpleFIN pipeline itself. Fires when any
+ * active connection hasn't successfully synced within `threshold` hours
+ * (default 24) or is sitting in status='error'. Evaluated for every user
+ * with rules on each worker tick — including users whose sync FAILED, which
+ * is exactly when this needs to fire. Dedupes daily per user.
+ */
+async function evaluateSyncStale(userId: string, rule: typeof alertRules.$inferSelect) {
+  const hours = Number(rule.threshold ?? 24);
+  const cutoff = new Date(Date.now() - hours * 3600_000);
+  const conns = await db.select().from(connections).where(eq(connections.userId, userId));
+  const active = conns.filter((c) => c.status !== "disconnected");
+  if (active.length === 0) return;
+
+  const unhealthy = active.filter(
+    (c) => c.status === "error" || !c.lastSyncedAt || c.lastSyncedAt < cutoff,
+  );
+  if (unhealthy.length === 0) return;
+
+  const lines = unhealthy.map((c) => {
+    const label = c.label || c.orgName || "Connection";
+    const age = c.lastSyncedAt
+      ? `last synced ${Math.round((Date.now() - c.lastSyncedAt.getTime()) / 3600_000)}h ago`
+      : "never synced";
+    return `${label}: ${age}${c.status === "error" ? " (status: error)" : ""}`;
+  });
+  await emit({
+    userId,
+    ruleId: rule.id,
+    kind: "sync_stale",
+    title: `Bank sync unhealthy: ${unhealthy.length} of ${active.length} connection(s) stale`,
+    body: `No fresh SimpleFIN data in over ${hours}h.\n${lines.join("\n")}`,
+    meta: { hours, staleConnectionIds: unhealthy.map((c) => c.id) },
+    dedupeKey: `sync_stale:${new Date().toISOString().slice(0, 10)}`,
+  });
 }
 
 async function evaluateLowBalance(userId: string, rule: typeof alertRules.$inferSelect) {

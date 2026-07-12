@@ -8,7 +8,7 @@
 import cron from "node-cron";
 import { lte, and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { connections, auditLog } from "@/lib/db/schema";
+import { connections, auditLog, alertRules } from "@/lib/db/schema";
 import { syncConnection } from "@/lib/simplefin/sync";
 import { categorizeUncategorized } from "@/lib/finance/categorize";
 import { snapshotAllUsers, snapshotNetWorthForUser } from "@/lib/finance/netWorthSnapshot";
@@ -69,6 +69,27 @@ async function runFrequentSync() {
     } catch (e) {
       console.error(`[worker] insights failed for ${uid}:`, e);
     }
+  }
+
+  // Health-check sweep: users whose sync FAILED (or who have no active
+  // connection at all) never enter the loop above, but that's precisely when
+  // sync_stale rules must still be evaluated and delivered.
+  try {
+    const ruleUsers = await db
+      .selectDistinct({ userId: alertRules.userId })
+      .from(alertRules)
+      .where(eq(alertRules.enabled, true));
+    for (const { userId } of ruleUsers) {
+      if (seenUsers.has(userId)) continue;
+      try {
+        await evaluateAlerts(userId);
+        await deliverPendingAlerts(userId);
+      } catch (e) {
+        console.error(`[worker] health sweep failed for ${userId}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error("[worker] health sweep failed:", e);
   }
 }
 

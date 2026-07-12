@@ -227,6 +227,30 @@ test("app integration", { skip: !ENABLED ? "run via scripts/test-mcp.mjs" : fals
     assert.ok(left.some((r) => r.id === fresh.id));
   });
 
+  await t.test("evaluateAlerts: sync_stale fires on old/errored connections only", async () => {
+    const { evaluateAlerts } = await import("@/lib/finance/alerts");
+    const u = await mkUser("synchealth@test.local");
+    await db.insert(s.connections).values([
+      { userId: u.id, accessUrlCipher: "x", label: "Fresh Bank", status: "active", lastSyncedAt: new Date() },
+      { userId: u.id, accessUrlCipher: "x", label: "Stale Bank", status: "active", lastSyncedAt: new Date(Date.now() - 48 * 3600_000) },
+      { userId: u.id, accessUrlCipher: "x", label: "Broken Bank", status: "error", lastSyncedAt: new Date() },
+      { userId: u.id, accessUrlCipher: "x", label: "Gone Bank", status: "disconnected", lastSyncedAt: null },
+    ]);
+    await db.insert(s.alertRules).values({ userId: u.id, kind: "sync_stale", threshold: "24", enabled: true });
+
+    await evaluateAlerts(u.id);
+    const alerts = await db.select().from(s.alerts).where(and(eq(s.alerts.userId, u.id), eq(s.alerts.kind, "sync_stale")));
+    assert.equal(alerts.length, 1, "one combined health alert");
+    assert.match(alerts[0].title, /2 of 3/, "stale + errored flagged; fresh ok; disconnected ignored");
+    assert.match(alerts[0].body ?? "", /Stale Bank/);
+    assert.match(alerts[0].body ?? "", /Broken Bank.*status: error/);
+    assert.ok(!(alerts[0].body ?? "").includes("Fresh Bank"));
+
+    await evaluateAlerts(u.id);
+    const after = await db.select().from(s.alerts).where(and(eq(s.alerts.userId, u.id), eq(s.alerts.kind, "sync_stale")));
+    assert.equal(after.length, 1, "daily dedupe");
+  });
+
   await t.test("authenticateMcpToken: valid, revoked, garbage", async () => {
     const { authenticateMcpToken } = await import("@/lib/mcp/server");
     const { generateToken } = await import("@/lib/crypto");

@@ -117,6 +117,7 @@ export function AlertsClient({ initial, rules }: { initial: Alert[]; rules: Rule
                 {r.kind === "category_overspend" && `${r.category} budget overrun`}
                 {r.kind === "low_balance" && `Account balance ≤ $${r.threshold?.toLocaleString()}`}
                 {r.kind === "card_dormant" && `Credit card unused for ${r.threshold?.toLocaleString()}+ days (flags annual fees)`}
+                {r.kind === "sync_stale" && `Bank sync stale for ${r.threshold?.toLocaleString()}+ hours`}
                 {!r.enabled && <span className="badge ml-2">disabled</span>}
               </div>
               <button
@@ -155,6 +156,7 @@ export function AlertsClient({ initial, rules }: { initial: Alert[]; rules: Rule
             <option value="category_overspend">Category overspend</option>
             <option value="low_balance">Low balance (per account; configure manually)</option>
             <option value="card_dormant">Card dormancy (unused credit cards)</option>
+            <option value="sync_stale">Bank sync health (no fresh data)</option>
           </select>
           <input
             value={form.category ?? ""}
@@ -167,7 +169,11 @@ export function AlertsClient({ initial, rules }: { initial: Alert[]; rules: Rule
             type="number"
             value={form.threshold ?? ""}
             onChange={(e) => setForm({ ...form, threshold: Number(e.target.value) })}
-            placeholder={form.kind === "card_dormant" ? "Days without a purchase" : "Threshold ($)"}
+            placeholder={
+              form.kind === "card_dormant" ? "Days without a purchase"
+              : form.kind === "sync_stale" ? "Hours without fresh data"
+              : "Threshold ($)"
+            }
             className="h-12 w-full rounded-2xl border border-outline bg-surface px-4 text-on-surface focus:border-primary focus:outline-none disabled:opacity-50"
           />
           <button onClick={addRule} className="btn btn-filled">
