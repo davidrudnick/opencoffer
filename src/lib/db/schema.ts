@@ -141,6 +141,24 @@ export const connections = pgTable(
   (t) => [index("connections_user_idx").on(t.userId)],
 );
 
+/* ---------- Family members: people whose money the user manages ---------- */
+
+/** A person (typically a child) that accounts can be "held for". Money in
+ *  held-for accounts is the member's, not the user's: excluded from the user's
+ *  net worth, allocations, and cash-flow analysis, and shown on the Family page. */
+export const familyMembers = pgTable(
+  "family_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("family_members_user_idx").on(t.userId)],
+);
+
 export const financialAccounts = pgTable(
   "financial_accounts",
   {
@@ -168,6 +186,10 @@ export const financialAccounts = pgTable(
     /** True once the user renames the account; sync then stops overwriting `name`
      *  (the provider's name is kept in officialName so the rename can be reset). */
     nameIsCustom: boolean("name_is_custom").notNull().default(false),
+    /** Set when the account's money is held for a family member (e.g. a child's
+     *  529/UTMA). Contributions into it are treated as irreversible gifts.
+     *  Null = the user's own money. */
+    heldForId: uuid("held_for_id").references(() => familyMembers.id, { onDelete: "set null" }),
     currentBalance: numeric("current_balance", { precision: 19, scale: 4 }),
     availableBalance: numeric("available_balance", { precision: 19, scale: 4 }),
     isoCurrencyCode: text("iso_currency_code").default("USD"),
@@ -397,6 +419,29 @@ export const netWorthSnapshots = pgTable(
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("nw_snap_user_day_idx").on(t.userId, t.snapshotDate)],
+);
+
+/** Daily value snapshot per family member (sum of their held-for accounts),
+ *  written alongside the household net-worth snapshot and by the backfill. */
+export const familyMemberSnapshots = pgTable(
+  "family_member_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => familyMembers.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    snapshotDate: timestamp("snapshot_date", { mode: "date" }).notNull(),
+    value: numeric("value", { precision: 19, scale: 4 }).notNull(),
+    byGroup: jsonb("by_group").notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("fm_snap_member_day_idx").on(t.memberId, t.snapshotDate),
+    index("fm_snap_user_idx").on(t.userId),
+  ],
 );
 
 /* ---------- Real assets: homes, vehicles, land, and other property ---------- */

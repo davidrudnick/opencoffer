@@ -1,6 +1,14 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { financialAccounts, transactions, netWorthSnapshots, realAssets, realAssetValues } from "@/lib/db/schema";
+import {
+  familyMembers,
+  familyMemberSnapshots,
+  financialAccounts,
+  transactions,
+  netWorthSnapshots,
+  realAssets,
+  realAssetValues,
+} from "@/lib/db/schema";
 import { selectAssetValueAt } from "@/lib/real-assets/valuation";
 
 export function localDayKey(date: Date): string {
@@ -32,6 +40,10 @@ export async function backfillNetWorth(userId: string, days = 180) {
     .select()
     .from(realAssets)
     .where(eq(realAssets.userId, userId));
+  const members = await db
+    .select()
+    .from(familyMembers)
+    .where(eq(familyMembers.userId, userId));
   if (accts.length === 0 && assetsRows.length === 0) return { snapshotsWritten: 0, days };
   const assetValueRows = assetsRows.length > 0
     ? await db
@@ -86,15 +98,26 @@ export async function backfillNetWorth(userId: string, days = 180) {
     const d = new Date(today.getTime() - offset * 86400_000);
     const dayKey = localDayKey(d);
 
-    // Compute totals at end-of-day d.
+    // Compute totals at end-of-day d. Held-for accounts accumulate into the
+    // family member's history instead of the user's own net worth.
     let assets = 0;
     let liabilities = 0;
     const byGroup: Record<string, number> = {};
+    const byMember = new Map<string, { value: number; byGroup: Record<string, number> }>();
+    for (const m of members) byMember.set(m.id, { value: 0, byGroup: {} });
     for (const a of accts) {
       const bal = liveBalances.get(a.id) ?? 0;
+      const g = a.userAccountGroup ?? a.accountGroup;
+      if (a.heldForId) {
+        const bucket = byMember.get(a.heldForId);
+        if (bucket) {
+          bucket.value += bal;
+          bucket.byGroup[g] = (bucket.byGroup[g] ?? 0) + bal;
+        }
+        continue;
+      }
       if (a.type === "depository" || a.type === "investment") assets += bal;
       else if (a.type === "credit" || a.type === "loan") liabilities += Math.abs(bal);
-      const g = a.userAccountGroup ?? a.accountGroup;
       byGroup[g] = (byGroup[g] ?? 0) + bal;
     }
     for (const asset of assetsRows) {
@@ -124,6 +147,21 @@ export async function backfillNetWorth(userId: string, days = 180) {
           byGroup,
         },
       });
+    for (const [memberId, bucket] of byMember) {
+      await db
+        .insert(familyMemberSnapshots)
+        .values({
+          memberId,
+          userId,
+          snapshotDate: d,
+          value: String(bucket.value),
+          byGroup: bucket.byGroup,
+        })
+        .onConflictDoUpdate({
+          target: [familyMemberSnapshots.memberId, familyMemberSnapshots.snapshotDate],
+          set: { value: String(bucket.value), byGroup: bucket.byGroup },
+        });
+    }
     written++;
 
     // Now walk back one more day: subtract today's tx from each account.

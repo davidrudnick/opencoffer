@@ -46,6 +46,15 @@ assignment per-account with \`set_account_group\` (e.g. treat a Fidelity brokera
 analysis. \`get_accounts\` surfaces \`systemGroup\` and \`userGroupOverride\` so you can
 see what's been customized.
 
+Family accounts ("held for"): an account can be tagged as held for a family member —
+typically a child's 529 or UTMA — via \`set_account_held_for\` (heldFor='clear' to untag)
+or Settings → Accounts. Held-for accounts are EXCLUDED from the user's net worth,
+balances, portfolio, and cash-flow analysis; get_net_worth reports their combined value
+as \`heldForFamilyTotal\`. Contributions into them are irreversible gifts (the \`gifts\`
+line in get_consumption_vs_savings — never count them as savings). For a member's own
+view use \`get_family_members\`, \`get_portfolio_summary(familyMember)\`,
+\`get_holdings(familyMember)\`, and \`chart_net_worth_history(familyMember)\`.
+
 Long-term memory (cross-conversation):
   remember(content, key?, pinned)  — save a fact about the user
   recall(query?, limit)            — search/list saved memories

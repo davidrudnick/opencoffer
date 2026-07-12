@@ -29,6 +29,7 @@ OpenCoffer is read-only against your financial accounts. It syncs through [Simpl
 - **Bank & brokerage sync** via SimpleFIN — one-token setup, encrypted access URLs.
 - **Net worth, cash flow, spending, subscriptions, holdings, real assets, budgets, alerts, saved charts** — all deterministic, all generated from your database.
 - **Deterministic transaction rules** — create merchant/name matching rules from transactions before AI categorization runs.
+- **Family accounts** — tag an account as held for a child (529/UTMA): it leaves your net worth and allocations, contributions count as gifts, and each family member gets their own allocation + history view.
 - **Alert push notifications** — deliver in-app alerts to ntfy, Discord, Slack, or a generic webhook.
 - **Bring your own LLM** — OpenAI, Anthropic, any OpenAI-compatible provider, ChatGPT subscription auth, local Ollama, or a self-hosted endpoint.
 - **Persistent chat with finance tools** — model picker, conversation history, category fixes, deterministic chart tools the LLM can call.

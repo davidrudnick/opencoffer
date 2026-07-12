@@ -20,7 +20,15 @@ export default async function Dashboard() {
   const userId = session.user.id;
 
   const [netWorth, recurring, spending, savingsDestinations, flow, accounts, recent] = await Promise.all([
-    callTool<{ assets: number; liabilities: number; netWorth: number; accountCount: number; realAssetCount: number }>(
+    callTool<{
+      assets: number;
+      liabilities: number;
+      netWorth: number;
+      accountCount: number;
+      heldForFamilyTotal: number;
+      heldForAccountCount: number;
+      realAssetCount: number;
+    }>(
       "get_net_worth", {}, userId,
     ),
     callTool<Array<{ merchant: string; months: number; typicalAmount: number; lastDate: Date; totalCharges: number }>>(
@@ -39,7 +47,7 @@ export default async function Dashboard() {
     callTool<Array<{ period: string; consumption: number; savings: number; income: number; net: number; savingsRate: number | null }>>(
       "get_consumption_vs_savings", { days: 90, groupBy: "month" }, userId,
     ),
-    callTool<Array<{ id: string; name: string; source: string; type: string; subtype: string | null; currentBalance: number; mask: string | null; currency: string | null }>>(
+    callTool<Array<{ id: string; name: string; source: string; type: string; subtype: string | null; currentBalance: number; mask: string | null; currency: string | null; heldFor: string | null }>>(
       "get_accounts", {}, userId,
     ),
     callTool<{ transactions: Array<{ id: string; date: Date | string; amount: number; name: string; merchant: string | null; category: string | null; pending: boolean; currency: string | null }> }>(
@@ -131,6 +139,14 @@ export default async function Dashboard() {
                 <Stat label="Assets" value={formatCurrency(netWorth.assets)} tone="success" />
                 <Stat label="Debt" value={formatCurrency(netWorth.liabilities)} tone="error" />
                 <Stat label="Accounts" value={String(accounts.length)} tone="default" />
+                {netWorth.heldForFamilyTotal > 0 && (
+                  <Link href="/dashboard/family" className="group">
+                    <div className="body-s text-on-surface-variant">Held for family (excluded)</div>
+                    <div className="title-m font-mono tabular-nums text-on-surface group-hover:text-primary">
+                      {formatCurrency(netWorth.heldForFamilyTotal)}
+                    </div>
+                  </Link>
+                )}
                 <Link href="/settings/connections" className="btn-text">
                   Manage <ArrowUpRight size={16} strokeWidth={2} />
                 </Link>
@@ -251,6 +267,7 @@ export default async function Dashboard() {
                     <div className="body-m truncate text-on-surface">
                       {a.name}
                       {a.source === "manual" && <span className="badge ml-2">Manual</span>}
+                      {a.heldFor && <span className="badge ml-2">Held for {a.heldFor}</span>}
                       {a.mask && (
                         <span className="ml-2 font-mono text-xs text-on-surface-variant">··{a.mask}</span>
                       )}

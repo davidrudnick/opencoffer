@@ -27,6 +27,7 @@ export const WORKSPACE_NAV: NavItem[] = [
   { href: "/chat", label: "Chat", Icon: MessageSquare },
   { href: "/dashboard/subscriptions", label: "Recurring", Icon: Repeat },
   { href: "/dashboard/investments", label: "Holdings", Icon: LineChart },
+  { href: "/dashboard/family", label: "Family", Icon: Users },
   { href: "/dashboard/assets", label: "Assets", Icon: Gem },
   { href: "/alerts", label: "Alerts", Icon: Bell },
 ];

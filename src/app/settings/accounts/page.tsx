@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { financialAccounts } from "@/lib/db/schema";
 import { asc, inArray } from "drizzle-orm";
+import { listFamilyMembers } from "@/lib/finance/accountScope";
 import { householdUserIds } from "@/lib/household";
 import { AppBar } from "@/components/AppBar";
 import { AccountsClient } from "./AccountsClient";
@@ -25,6 +26,7 @@ export default async function AccountsPage() {
       systemGroup: financialAccounts.accountGroup,
       userOverride: financialAccounts.userAccountGroup,
       nameIsCustom: financialAccounts.nameIsCustom,
+      heldForId: financialAccounts.heldForId,
       currentBalance: financialAccounts.currentBalance,
       currency: financialAccounts.isoCurrencyCode,
       source: financialAccounts.source,
@@ -32,6 +34,8 @@ export default async function AccountsPage() {
     .from(financialAccounts)
     .where(inArray(financialAccounts.userId, ids))
     .orderBy(asc(financialAccounts.accountGroup), asc(financialAccounts.name));
+
+  const members = await listFamilyMembers(ids);
 
   return (
     <>
@@ -54,6 +58,7 @@ export default async function AccountsPage() {
             ...r,
             currentBalance: Number(r.currentBalance ?? 0),
           }))}
+          familyMembers={members.map((m) => ({ id: m.id, name: m.name }))}
         />
       </div>
     </>

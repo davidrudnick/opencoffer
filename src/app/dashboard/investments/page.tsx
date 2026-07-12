@@ -2,10 +2,11 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { holdings, securities, financialAccounts } from "@/lib/db/schema";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { AppBar } from "@/components/AppBar";
 import { HoldingsClient } from "./HoldingsClient";
 import { householdUserIds } from "@/lib/household";
+import { notHeldForWhere, ownAccountsWhere } from "@/lib/finance/accountScope";
 
 export default async function InvestmentsPage() {
   const session = await auth();
@@ -30,7 +31,9 @@ export default async function InvestmentsPage() {
     .from(holdings)
     .leftJoin(securities, eq(securities.id, holdings.securityId))
     .leftJoin(financialAccounts, eq(financialAccounts.id, holdings.accountId))
-    .where(inArray(holdings.userId, ids));
+    // Own money only — holdings in accounts held for family members live on
+    // the Family page.
+    .where(and(inArray(holdings.userId, ids), notHeldForWhere(holdings.accountId)));
 
   const investmentAccts = await db
     .select({
@@ -43,9 +46,7 @@ export default async function InvestmentsPage() {
       currency: financialAccounts.isoCurrencyCode,
     })
     .from(financialAccounts)
-    .where(
-      sql`${financialAccounts.userId} in ${ids} and ${financialAccounts.type} = 'investment'`,
-    );
+    .where(and(ownAccountsWhere(ids), eq(financialAccounts.type, "investment")));
 
   const positions = rows.map((r) => {
     const qty = Number(r.quantity ?? 0);

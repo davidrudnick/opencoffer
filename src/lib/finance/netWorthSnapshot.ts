@@ -1,12 +1,22 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { financialAccounts, netWorthSnapshots, users } from "@/lib/db/schema";
+import {
+  familyMembers,
+  familyMemberSnapshots,
+  financialAccounts,
+  netWorthSnapshots,
+  users,
+} from "@/lib/db/schema";
 import { listRealAssetsForUser } from "@/lib/real-assets/data";
 
 /**
  * Insert today's net-worth snapshot for one user. Idempotent (one per day);
  * if today already exists, update it in case the user has just synced more
  * data within the same day.
+ *
+ * Accounts held for a family member are excluded from the user's own snapshot;
+ * each member gets their own daily value row in family_member_snapshots
+ * (written even when zero, so untagging is reflected in their history).
  */
 export async function snapshotNetWorthForUser(userId: string) {
   const rows = await db
@@ -14,13 +24,28 @@ export async function snapshotNetWorthForUser(userId: string) {
     .from(financialAccounts)
     .where(eq(financialAccounts.userId, userId));
   const realAssetRows = await listRealAssetsForUser(userId);
+  const members = await db
+    .select()
+    .from(familyMembers)
+    .where(eq(familyMembers.userId, userId));
 
   let assets = 0;
   let liabilities = 0;
   const byGroup: Record<string, number> = {};
+  const byMember = new Map<string, { value: number; byGroup: Record<string, number> }>();
+  for (const m of members) byMember.set(m.id, { value: 0, byGroup: {} });
+
   for (const a of rows) {
     const bal = Number(a.currentBalance ?? 0);
     const g = a.userAccountGroup ?? a.accountGroup;
+    if (a.heldForId) {
+      const bucket = byMember.get(a.heldForId);
+      if (bucket) {
+        bucket.value += bal;
+        bucket.byGroup[g] = (bucket.byGroup[g] ?? 0) + bal;
+      }
+      continue;
+    }
     // Classify by effective group so user re-grouped accounts land on the
     // right side of the ledger — same rule as the get_net_worth tool.
     if (g === "credit" || g === "loan") liabilities += Math.abs(bal);
@@ -58,6 +83,22 @@ export async function snapshotNetWorthForUser(userId: string) {
         byGroup,
       },
     });
+
+  for (const [memberId, bucket] of byMember) {
+    await db
+      .insert(familyMemberSnapshots)
+      .values({
+        memberId,
+        userId,
+        snapshotDate: today,
+        value: String(bucket.value),
+        byGroup: bucket.byGroup,
+      })
+      .onConflictDoUpdate({
+        target: [familyMemberSnapshots.memberId, familyMemberSnapshots.snapshotDate],
+        set: { value: String(bucket.value), byGroup: bucket.byGroup },
+      });
+  }
 }
 
 export async function snapshotAllUsers() {

@@ -1,5 +1,5 @@
 /**
- * Integration suite for the 38 MCP finance tools + the MCP JSON-RPC server.
+ * Integration suite for the 40 MCP finance tools + the MCP JSON-RPC server.
  *
  * Runs against a dedicated `opencoffer_test` database seeded with a fixture
  * set designed to exercise the semantics the tools document:
@@ -489,6 +489,76 @@ test("mcp tool integration", { skip: !ENABLED ? "run via scripts/test-mcp.mjs" :
     await call("set_account_group", { accountId: BRK.id, group: "clear" });
     rows = await call("get_balances_by_group");
     near(rows.find((r) => r.group === "brokerage")!.balance, 10000, "clear restores system group");
+  });
+
+  await t.test("family members: held-for tagging, exclusion, gifts, member views", async () => {
+    // Tag the brokerage as held for Emma — member auto-created, history rebuilt.
+    const tagged: { ok: boolean; heldFor: string | null } = await call("set_account_held_for", { accountId: BRK.id, heldFor: "Emma" });
+    assert.equal(tagged.ok, true);
+    assert.equal(tagged.heldFor, "Emma");
+
+    // Net worth excludes her money and reports it separately.
+    const nw: { assets: number; heldForFamilyTotal: number; heldForAccountCount: number; accountCount: number } =
+      await call("get_net_worth");
+    near(nw.assets, 27000, "assets exclude Emma's brokerage");
+    near(nw.heldForFamilyTotal, 10000, "held-for total reported");
+    assert.equal(nw.heldForAccountCount, 1);
+    assert.equal(nw.accountCount, 5, "own account count excludes hers");
+
+    // Group balances and own portfolio/holdings exclude her accounts.
+    const groups: Array<{ group: string; balance: number }> = await call("get_balances_by_group");
+    assert.ok(!groups.some((g) => g.group === "brokerage"), "brokerage group gone from own balances");
+    const pfOwn: { totalValue: number; positionsCount: number } = await call("get_portfolio_summary");
+    near(pfOwn.totalValue, 20000, "own portfolio = 401k only");
+    assert.equal(pfOwn.positionsCount, 1);
+    const ownHoldings: Array<{ ticker: string | null }> = await call("get_holdings");
+    assert.ok(!ownHoldings.some((h) => h.ticker === "AAPL"), "own holdings exclude Emma's AAPL");
+
+    // Member-scoped views (case-insensitive name lookup).
+    const pfEmma: { familyMember: string | null; totalValue: number; topPositions: Array<{ ticker: string | null }> } =
+      await call("get_portfolio_summary", { familyMember: "emma" });
+    assert.equal(pfEmma.familyMember, "Emma");
+    near(pfEmma.totalValue, 10000, "Emma's portfolio value");
+    assert.equal(pfEmma.topPositions[0].ticker, "AAPL");
+    const emmaHoldings: Array<{ ticker: string | null }> = await call("get_holdings", { familyMember: "Emma" });
+    assert.deepEqual(emmaHoldings.map((h) => h.ticker), ["AAPL"]);
+    const unknown: { error?: string; availableMembers?: string[] } =
+      await call("get_portfolio_summary", { familyMember: "Nobody" });
+    assert.ok(unknown.error, "unknown member returns an error");
+    assert.deepEqual(unknown.availableMembers, ["Emma"]);
+
+    const members: Array<{ name: string; totalValue: number; accounts: Array<{ name: string }> }> =
+      await call("get_family_members");
+    assert.equal(members.length, 1);
+    assert.equal(members[0].name, "Emma");
+    near(members[0].totalValue, 10000, "member roll-up total");
+    assert.equal(members[0].accounts.length, 1);
+
+    // Backfill populated her daily history; today's point = current balance.
+    const hist: { _chart: { data: Array<{ net: number }> } } =
+      await call("chart_net_worth_history", { days: 30, familyMember: "Emma" });
+    assert.ok(hist._chart.data.length >= 28, "member snapshots backfilled");
+    near(hist._chart.data[hist._chart.data.length - 1].net, 10000, "latest member value = balance");
+
+    // Gifts: money arriving in her account is a gift; her dividends are hers,
+    // not the user's income.
+    await db.insert(s.transactions).values([
+      { accountId: BRK.id, userId: u1.id, externalTxId: "gift-1", date: d(2), amount: "1000", name: "CONTRIBUTION FROM CHECKING", isTransfer: true },
+      { accountId: BRK.id, userId: u1.id, externalTxId: "div-1", date: d(2), amount: "25", name: "AAPL DIVIDEND", aiCategory: "Income — Dividend" },
+    ]);
+    const [flow]: Array<{ consumption: number; savings: number; gifts: number; income: number; net: number }> =
+      await call("get_consumption_vs_savings", { days: 20, groupBy: "total" });
+    near(flow.gifts, 1000, "contribution counts as a gift; dividend excluded");
+    near(flow.income, 3000, "Emma's dividend is not the user's income");
+    near(flow.savings, 500, "gifts are not savings");
+    near(flow.net, 3000 - flow.consumption - 500 - 1000, "net subtracts gifts");
+
+    // Untag: her balance rejoins the user's net worth.
+    const cleared: { ok: boolean; heldFor: string | null } = await call("set_account_held_for", { accountId: BRK.id, heldFor: "clear" });
+    assert.equal(cleared.heldFor, null);
+    const nwAfter: { assets: number; heldForFamilyTotal: number } = await call("get_net_worth");
+    near(nwAfter.assets, 37000, "assets restored after clearing");
+    near(nwAfter.heldForFamilyTotal, 0, "nothing held for family");
   });
 
   /* ------------------------------------------------------------------ */

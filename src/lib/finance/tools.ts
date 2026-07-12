@@ -10,10 +10,21 @@ import {
   securities,
   budgets,
   netWorthSnapshots,
+  familyMembers,
+  familyMemberSnapshots,
   alerts as alertsTable,
   aiInsights,
   assistantMemories,
 } from "@/lib/db/schema";
+import {
+  findFamilyMember,
+  heldForAnyWhere,
+  heldForMemberWhere,
+  listFamilyMembers,
+  notHeldForWhere,
+  ownAccountsWhere,
+  ownTransactionsWhere,
+} from "@/lib/finance/accountScope";
 import {
   INCOME_CATEGORIES,
   SAVINGS_CATEGORIES,
@@ -28,6 +39,7 @@ import {
   type SpendingKind,
 } from "@/lib/finance/display";
 import { categorizeUncategorized, recategorizeAll } from "@/lib/finance/categorize";
+import { backfillNetWorth } from "@/lib/finance/netWorthBackfill";
 import { listRealAssetsForUser } from "@/lib/real-assets/data";
 
 const ACCOUNT_GROUPS = ["cash", "credit", "retirement", "brokerage", "hsa", "loan", "other"] as const;
@@ -148,15 +160,17 @@ export type FinanceTool<TSchema extends z.ZodTypeAny = z.ZodTypeAny> = {
 const getAccounts: FinanceTool = {
   name: "get_accounts",
   description:
-    "List the user's financial accounts with balances, including SimpleFIN-synced and manual accounts. Each account has `source`, `type` (depository/credit/investment/loan) and `group` (cash/credit/retirement/brokerage/hsa/loan/other). Use `group` for analysis — e.g. 'cash' = spendable checking+savings, 'retirement' = 401k/IRA/HSA-like, 'brokerage' = taxable investments.",
+    "List the user's financial accounts with balances, including SimpleFIN-synced and manual accounts. Each account has `source`, `type` (depository/credit/investment/loan) and `group` (cash/credit/retirement/brokerage/hsa/loan/other). Use `group` for analysis — e.g. 'cash' = spendable checking+savings, 'retirement' = 401k/IRA/HSA-like, 'brokerage' = taxable investments. Accounts with `heldFor` set hold money for that family member (e.g. a child's 529) and are excluded from the user's own net worth and analysis.",
   schema: z.object({}).strict(),
   execute: async (_args, { userId }) => {
     const ids = await householdUserIds(userId);
     const rows = await db
-      .select()
+      .select({ a: financialAccounts, heldForName: familyMembers.name })
       .from(financialAccounts)
+      .leftJoin(familyMembers, eq(familyMembers.id, financialAccounts.heldForId))
       .where(inArray(financialAccounts.userId, ids));
-    return rows.map((a) => ({
+    return rows.map(({ a, heldForName }) => ({
+      heldFor: heldForName,
       id: a.id,
       name: a.name,
       officialName: a.officialName,
@@ -329,6 +343,7 @@ const getSpendingByCategory: FinanceTool = {
       sql`${transactions.amount} < 0`,
       eq(transactions.pending, false),
       spendKindWhere(kind),
+      ownTransactionsWhere(),
     );
     const effectiveCategory = effectiveCategorySQL();
     if (groupBy === "total") {
@@ -375,12 +390,26 @@ const getSpendingByCategory: FinanceTool = {
 
 const getHoldings: FinanceTool = {
   name: "get_holdings",
-  description: "Return investment holdings with current institution value and cost basis.",
-  schema: z.object({ accountId: z.string().uuid().nullish() }).strict(),
-  execute: async ({ accountId }, { userId }) => {
+  description:
+    "Return investment holdings with current institution value and cost basis. Defaults to the user's own accounts; pass familyMember to see holdings in accounts held for that family member, or accountId to target one account (accountId bypasses the own/held-for scope).",
+  schema: z
+    .object({ accountId: z.string().uuid().nullish(), familyMember: z.string().min(1).nullish() })
+    .strict(),
+  execute: async ({ accountId, familyMember }, { userId }) => {
     const ids = await householdUserIds(userId);
     const conds = [inArray(holdings.userId, ids)];
-    if (accountId) conds.push(eq(holdings.accountId, accountId));
+    if (accountId) {
+      conds.push(eq(holdings.accountId, accountId));
+    } else if (familyMember) {
+      const member = await findFamilyMember(ids, familyMember);
+      if (!member) {
+        const available = await listFamilyMembers(ids);
+        return { error: `no family member named "${familyMember}"`, availableMembers: available.map((m) => m.name) };
+      }
+      conds.push(heldForMemberWhere(holdings.accountId, member.id));
+    } else {
+      conds.push(notHeldForWhere(holdings.accountId));
+    }
     const rows = await db
       .select({
         accountId: holdings.accountId,
@@ -433,6 +462,7 @@ const getRecurringMerchants: FinanceTool = {
           sql`${transactions.amount} < 0`,
           eq(transactions.pending, false),
           spendKindWhere("consumption"),
+          ownTransactionsWhere(),
         ),
       );
 
@@ -477,7 +507,7 @@ const getRecurringMerchants: FinanceTool = {
 const getNetWorth: FinanceTool = {
   name: "get_net_worth",
   description:
-    "Compute net worth by summing depository + investment account balances plus real assets, then subtracting credit + loan balances.",
+    "Compute net worth by summing depository + investment account balances plus real assets, then subtracting credit + loan balances. Accounts held for family members (children's 529/UTMA etc.) are EXCLUDED — their combined value is reported separately as heldForFamilyTotal.",
   schema: z.object({}).strict(),
   execute: async (_args, { userId }) => {
     const ids = await householdUserIds(userId);
@@ -495,8 +525,16 @@ const getNetWorth: FinanceTool = {
     const liabilityGroups = new Set(["credit", "loan"]);
     let assets = 0;
     let liabilities = 0;
+    let heldForFamilyTotal = 0;
+    let heldForAccountCount = 0;
     for (const a of rows) {
       const bal = num(a.currentBalance);
+      // Money held for a family member is theirs, not the user's.
+      if (a.heldForId) {
+        heldForFamilyTotal += bal;
+        heldForAccountCount += 1;
+        continue;
+      }
       // Credit/loan balances are stored as negative numbers (you owe them).
       // Convert to positive "amount owed" for the user-facing liabilities figure.
       if (liabilityGroups.has(effectiveGroup(a))) liabilities += Math.abs(bal);
@@ -509,7 +547,9 @@ const getNetWorth: FinanceTool = {
       assets,
       liabilities,
       netWorth: assets - liabilities,
-      accountCount: rows.length,
+      accountCount: rows.length - heldForAccountCount,
+      heldForFamilyTotal,
+      heldForAccountCount,
       realAssetCount: realAssetRows.filter((asset) => asset.status === "active" && asset.currentValue).length,
       asOf: new Date(),
     };
@@ -555,6 +595,7 @@ const getTopMerchants: FinanceTool = {
           signCond,
           eq(transactions.pending, false),
           kindCond,
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(sql`coalesce(${transactions.overrideMerchant}, ${transactions.merchantName}, ${transactions.name})`)
@@ -589,6 +630,7 @@ const getLargestTransactions: FinanceTool = {
       gte(transactions.date, daysAgo(days)),
       eq(transactions.pending, false),
       sql`${effectiveIsTransferSQL()} = false`,
+      ownTransactionsWhere(),
     ];
     if (direction === "outflow") conds.push(sql`${transactions.amount} < 0`);
     if (direction === "inflow") conds.push(sql`${transactions.amount} > 0`);
@@ -640,6 +682,7 @@ const getCashFlow: FinanceTool = {
           gte(transactions.date, daysAgo(days)),
           eq(transactions.pending, false),
           sql`${effectiveIsTransferSQL()} = false`,
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(period)
@@ -690,6 +733,7 @@ const comparePeriods: FinanceTool = {
             sql`${transactions.amount} < 0`,
             eq(transactions.pending, false),
             spendKindWhere("consumption"),
+            ownTransactionsWhere(),
           ),
         )
         .groupBy(effectiveCategory);
@@ -732,14 +776,26 @@ const comparePeriods: FinanceTool = {
 const getPortfolioSummary: FinanceTool = {
   name: "get_portfolio_summary",
   description:
-    "Aggregate investment-account holdings. Returns total invested value, breakdown by account, and (if holdings are populated) top positions across all accounts. Useful for 'what's my portfolio worth' / 'biggest holdings'.",
-  schema: z.object({}).strict(),
-  execute: async (_args, { userId }) => {
+    "Aggregate investment-account holdings. Returns total invested value, breakdown by account, and (if holdings are populated) top positions across all accounts. Useful for 'what's my portfolio worth' / 'biggest holdings'. By default covers the user's OWN accounts (held-for-family accounts excluded); pass familyMember with a family member's name to see that member's portfolio instead.",
+  schema: z.object({ familyMember: z.string().min(1).nullish() }).strict(),
+  execute: async ({ familyMember }, { userId }) => {
     const ids = await householdUserIds(userId);
+    const member = familyMember ? await findFamilyMember(ids, familyMember) : null;
+    if (familyMember && !member) {
+      const available = await listFamilyMembers(ids);
+      return {
+        error: `no family member named "${familyMember}"`,
+        availableMembers: available.map((m) => m.name),
+      };
+    }
     const accts = await db
       .select()
       .from(financialAccounts)
-      .where(and(inArray(financialAccounts.userId, ids), eq(financialAccounts.type, "investment")));
+      .where(
+        member
+          ? and(inArray(financialAccounts.userId, ids), eq(financialAccounts.heldForId, member.id))
+          : and(ownAccountsWhere(ids), eq(financialAccounts.type, "investment")),
+      );
 
     const positions = await db
       .select({
@@ -752,7 +808,12 @@ const getPortfolioSummary: FinanceTool = {
       })
       .from(holdings)
       .leftJoin(securities, eq(securities.id, holdings.securityId))
-      .where(inArray(holdings.userId, ids));
+      .where(
+        and(
+          inArray(holdings.userId, ids),
+          member ? heldForMemberWhere(holdings.accountId, member.id) : notHeldForWhere(holdings.accountId),
+        ),
+      );
 
     const byAccount = accts.map((a) => ({
       account: a.name,
@@ -786,6 +847,7 @@ const getPortfolioSummary: FinanceTool = {
       }));
 
     return {
+      familyMember: member?.name ?? null,
       totalValue,
       accountCount: accts.length,
       positionsCount: positions.length,
@@ -798,7 +860,7 @@ const getPortfolioSummary: FinanceTool = {
 const getConsumptionVsSavings: FinanceTool = {
   name: "get_consumption_vs_savings",
   description:
-    "Break down outflows into consumption (real spending) vs savings/investing (retirement, brokerage, HSA contributions) per period. Also surfaces income for context. Returns the savings rate (savings / income). Useful for 'am I saving enough' and 'how much of my paycheck am I keeping'.",
+    "Break down outflows into consumption (real spending) vs savings/investing (retirement, brokerage, HSA contributions) per period. Also surfaces income for context, plus `gifts` — irreversible contributions into accounts held for family members (a child's 529/UTMA), which are NOT savings. Returns the savings rate (savings / income). Useful for 'am I saving enough' and 'how much of my paycheck am I keeping'.",
   schema: z
     .object({
       days: z.number().int().min(7).max(730),
@@ -831,27 +893,61 @@ const getConsumptionVsSavings: FinanceTool = {
           inArray(transactions.userId, ids),
           gte(transactions.date, daysAgo(days)),
           eq(transactions.pending, false),
+          ownTransactionsWhere(),
         ),
       );
 
-    const rows =
-      groupBy === "total"
-        ? await baseQuery
-        : await baseQuery.groupBy(periodExpr).orderBy(periodExpr);
+    // Gifts are measured at the destination: money arriving in a held-for
+    // account is an irreversible contribution to that family member. The
+    // member's own investment income (dividends/interest inside the account)
+    // is excluded — it was never the user's money.
+    const giftsQuery = db
+      .select({
+        period: periodExpr,
+        gifts: sql<string>`coalesce(sum(case when ${transactions.amount} > 0 and ${kind} <> 'income' then ${transactions.amount} else 0 end), 0)::text`,
+      })
+      .from(transactions)
+      .where(
+        and(
+          inArray(transactions.userId, ids),
+          gte(transactions.date, daysAgo(days)),
+          eq(transactions.pending, false),
+          heldForAnyWhere(transactions.accountId),
+        ),
+      );
 
-    return rows
-      .map((r) => {
-        const consumption = num(r.consumption);
-        const savings = num(r.savings);
-        const income = num(r.income);
+    const [rows, giftRows] =
+      groupBy === "total"
+        ? await Promise.all([baseQuery, giftsQuery])
+        : await Promise.all([
+            baseQuery.groupBy(periodExpr).orderBy(periodExpr),
+            giftsQuery.groupBy(periodExpr).orderBy(periodExpr),
+          ]);
+
+    const byPeriod = new Map(
+      rows.map((r) => [
+        r.period ?? "total",
+        { consumption: num(r.consumption), savings: num(r.savings), income: num(r.income) },
+      ]),
+    );
+    for (const g of giftRows) {
+      const key = g.period ?? "total";
+      if (!byPeriod.has(key)) byPeriod.set(key, { consumption: 0, savings: 0, income: 0 });
+    }
+    const giftsByPeriod = new Map(giftRows.map((g) => [g.period ?? "total", num(g.gifts)]));
+
+    return [...byPeriod.entries()]
+      .map(([period, r]) => {
+        const gifts = giftsByPeriod.get(period) ?? 0;
         return {
-          period: r.period ?? "total",
-          consumption,
-          savings,
-          income,
-          net: income - consumption - savings,
+          period,
+          consumption: r.consumption,
+          savings: r.savings,
+          gifts,
+          income: r.income,
+          net: r.income - r.consumption - r.savings - gifts,
           savingsRate:
-            income > 0 ? Math.round((savings / income) * 1000) / 10 : null,
+            r.income > 0 ? Math.round((r.savings / r.income) * 1000) / 10 : null,
         };
       })
       .sort((a, b) => a.period.localeCompare(b.period));
@@ -935,6 +1031,7 @@ const chartSpendingTrend: FinanceTool = {
           sql`${transactions.amount} < 0`,
           eq(transactions.pending, false),
           spendKindWhere(kind),
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(period)
@@ -986,6 +1083,7 @@ const chartCategoryBreakdown: FinanceTool = {
           sql`${transactions.amount} < 0`,
           eq(transactions.pending, false),
           spendKindWhere(kind),
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(effectiveCategory)
@@ -1038,6 +1136,7 @@ const chartSavingsDestinations: FinanceTool = {
           sql`${transactions.amount} < 0`,
           eq(transactions.pending, false),
           spendKindWhere("savings"),
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(financialAccounts.accountGroup, financialAccounts.userAccountGroup)
@@ -1236,7 +1335,7 @@ const chartBalancesByType: FinanceTool = {
     const rows = await db
       .select()
       .from(financialAccounts)
-      .where(inArray(financialAccounts.userId, ids));
+      .where(ownAccountsWhere(ids));
     const byType = new Map<string, number>();
     for (const a of rows) byType.set(a.type, (byType.get(a.type) ?? 0) + num(a.currentBalance));
     const data = [...byType.entries()].map(([type, balance]) => ({ type, balance }));
@@ -1269,7 +1368,7 @@ const getBalancesByGroup: FinanceTool = {
       db
         .select()
         .from(financialAccounts)
-        .where(inArray(financialAccounts.userId, ids)),
+        .where(ownAccountsWhere(ids)),
       listRealAssetsForUser(userId),
     ]);
     const byGroup = new Map<string, { balance: number; accounts: number }>();
@@ -1366,6 +1465,7 @@ const checkBudgetStatus: FinanceTool = {
           sql`${transactions.amount} < 0`,
           eq(transactions.pending, false),
           spendKindWhere("consumption"),
+          ownTransactionsWhere(),
         ),
       )
       .groupBy(effectiveCategorySQL());
@@ -1392,11 +1492,45 @@ const checkBudgetStatus: FinanceTool = {
 const chartNetWorthHistory: FinanceTool = {
   name: "chart_net_worth_history",
   description:
-    "Render a line chart of net worth over time from the daily snapshots. Use when the user asks 'how has my net worth changed', 'am I richer than X months ago', or 'show me my net worth trend'.",
-  schema: z.object({ days: z.number().int().min(7).max(1825) }).strict(),
-  execute: async ({ days }, { userId }) => {
+    "Render a line chart of net worth over time from the daily snapshots. Use when the user asks 'how has my net worth changed', 'am I richer than X months ago', or 'show me my net worth trend'. Pass familyMember to chart the value of accounts held for that family member instead (e.g. a child's investments over time).",
+  schema: z
+    .object({ days: z.number().int().min(7).max(1825), familyMember: z.string().min(1).nullish() })
+    .strict(),
+  execute: async ({ days, familyMember }, { userId }) => {
     const ids = await householdUserIds(userId);
     const cutoff = new Date(Date.now() - days * 86400_000);
+    if (familyMember) {
+      const member = await findFamilyMember(ids, familyMember);
+      if (!member) {
+        const available = await listFamilyMembers(ids);
+        return { error: `no family member named "${familyMember}"`, availableMembers: available.map((m) => m.name) };
+      }
+      const rows = await db
+        .select({
+          date: sql<string>`to_char(${familyMemberSnapshots.snapshotDate}, 'YYYY-MM-DD')`,
+          value: familyMemberSnapshots.value,
+        })
+        .from(familyMemberSnapshots)
+        .where(and(eq(familyMemberSnapshots.memberId, member.id), gte(familyMemberSnapshots.snapshotDate, cutoff)))
+        .orderBy(familyMemberSnapshots.snapshotDate);
+      const data = rows.map((r) => ({ date: r.date, net: num(r.value) }));
+      return chartResult(
+        { data },
+        {
+          type: "line",
+          title: `${member.name} — account value`,
+          subtitle: dateWindowLabel(days),
+          description: `Daily value of accounts held for ${member.name}.`,
+          freshness: await chartFreshness(userId, { days, exclusions: [] }),
+          seriesLabels: { net: "Value" },
+          emptyReason: `No snapshots for ${member.name} yet. Tag their accounts and run the snapshot backfill to populate this chart.`,
+          data,
+          xKey: "date",
+          yKey: "net",
+          format: "currency",
+        },
+      );
+    }
     const rows = await db
       .select({
         // Force a text result; SQL DATE through node-postgres can confuse Drizzle.
@@ -1465,6 +1599,7 @@ const projectCashFlow: FinanceTool = {
           gte(transactions.date, since),
           eq(transactions.isRecurring, true),
           eq(transactions.isTransfer, false),
+          ownTransactionsWhere(),
         ),
       );
     const now = new Date();
@@ -1506,7 +1641,7 @@ const projectCashFlow: FinanceTool = {
       .where(
         accountId
           ? and(inArray(financialAccounts.userId, ids), eq(financialAccounts.id, accountId))
-          : and(inArray(financialAccounts.userId, ids), eq(financialAccounts.type, "depository")),
+          : and(ownAccountsWhere(ids), eq(financialAccounts.type, "depository")),
       );
     const startBalance = accts.reduce((s, a) => s + num(a.currentBalance), 0);
     let running = startBalance;
@@ -1687,6 +1822,87 @@ const setAccountGroup: FinanceTool = {
   },
 };
 
+/* ------------------------------ family members (held-for accounts) ------------------------------ */
+
+const setAccountHeldFor: FinanceTool = {
+  name: "set_account_held_for",
+  description:
+    "Tag an account as held for a family member (e.g. a child's 529 or UTMA). The member is created if they don't exist yet. Held-for accounts are excluded from the user's net worth, allocations, and cash-flow analysis; contributions into them count as irreversible gifts. Pass heldFor='clear' to return the account to the user's own money. Net-worth history is rebuilt so charts stay consistent. The change is persistent.",
+  schema: z
+    .object({
+      accountId: z.string().uuid(),
+      heldFor: z.string().min(1),
+    })
+    .strict(),
+  execute: async ({ accountId, heldFor }, { userId }) => {
+    const ids = await householdUserIds(userId);
+    let member: { id: string; name: string } | null = null;
+    if (heldFor.toLowerCase() !== "clear") {
+      member = await findFamilyMember(ids, heldFor);
+      if (!member) {
+        const [created] = await db
+          .insert(familyMembers)
+          .values({ userId, name: heldFor.trim() })
+          .returning({ id: familyMembers.id, name: familyMembers.name });
+        member = created;
+      }
+    }
+    const r = await db
+      .update(financialAccounts)
+      .set({ heldForId: member?.id ?? null, updatedAt: new Date() })
+      .where(and(inArray(financialAccounts.userId, ids), eq(financialAccounts.id, accountId)))
+      .returning({ id: financialAccounts.id, name: financialAccounts.name, userId: financialAccounts.userId });
+    if (r.length === 0) return { ok: false, error: "account not found" };
+    // Rebuild history for the account's owner so net-worth and member charts
+    // reflect the tag retroactively instead of showing a cliff on tag day.
+    await backfillNetWorth(r[0].userId, 365);
+    return {
+      ok: true,
+      account: r[0].name,
+      heldFor: member?.name ?? null,
+      note: member
+        ? `${r[0].name} is now held for ${member.name}; excluded from the user's net worth. History rebuilt.`
+        : `${r[0].name} is the user's own money again. History rebuilt.`,
+    };
+  },
+};
+
+const getFamilyMembers: FinanceTool = {
+  name: "get_family_members",
+  description:
+    "List family members and the accounts held for each (a child's 529/UTMA etc.) with total value. Use for 'how much do the kids have', 'list Emma's accounts', or before set_account_held_for / get_portfolio_summary(familyMember).",
+  schema: z.object({}).strict(),
+  execute: async (_args, { userId }) => {
+    const ids = await householdUserIds(userId);
+    const members = await listFamilyMembers(ids);
+    const accounts = await db
+      .select()
+      .from(financialAccounts)
+      .where(
+        and(
+          inArray(financialAccounts.userId, ids),
+          sql`${financialAccounts.heldForId} is not null`,
+        ),
+      );
+    return members.map((m) => {
+      const own = accounts.filter((a) => a.heldForId === m.id);
+      return {
+        id: m.id,
+        name: m.name,
+        totalValue: own.reduce((s, a) => s + num(a.currentBalance), 0),
+        accounts: own.map((a) => ({
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          group: effectiveGroup(a),
+          balance: num(a.currentBalance),
+          currency: a.isoCurrencyCode,
+        })),
+      };
+    });
+  },
+};
+
 /* ------------------------------ long-term memory ------------------------------ */
 
 const remember: FinanceTool = {
@@ -1849,6 +2065,8 @@ export const financeTools: FinanceTool[] = [
   listCategories,
   getInsights,
   setAccountGroup,
+  setAccountHeldFor,
+  getFamilyMembers,
   remember,
   recall,
   forget,

@@ -3,7 +3,15 @@
 import { FormEvent, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
-import { renameAccount, resetAccountName, setAccountGroup } from "./actions";
+import {
+  createFamilyMember,
+  deleteFamilyMember,
+  renameAccount,
+  renameFamilyMember,
+  resetAccountName,
+  setAccountGroup,
+  setAccountHeldFor,
+} from "./actions";
 import { Check, Pencil, RotateCcw, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toaster";
@@ -21,12 +29,21 @@ type Account = {
   systemGroup: string;
   userOverride: string | null;
   nameIsCustom: boolean;
+  heldForId: string | null;
   currentBalance: number;
   currency: string | null;
   source: string;
 };
 
-export function AccountsClient({ accounts }: { accounts: Account[] }) {
+type FamilyMember = { id: string; name: string };
+
+export function AccountsClient({
+  accounts,
+  familyMembers,
+}: {
+  accounts: Account[];
+  familyMembers: FamilyMember[];
+}) {
   const [items, setItems] = useState(accounts);
   const manualAccounts = items.filter((account) => account.source === "manual");
 
@@ -39,10 +56,12 @@ export function AccountsClient({ accounts }: { accounts: Account[] }) {
         onDeleted={(id) => setItems((current) => current.filter((item) => item.id !== id))}
       />
 
+      <FamilyMembersPanel members={familyMembers} />
+
       <div className="card-elevated p-0">
         <div className="divide-y divide-outline-variant">
           {items.map((a) => (
-            <AccountRow key={a.id} account={a} />
+            <AccountRow key={a.id} account={a} familyMembers={familyMembers} />
           ))}
           {items.length === 0 && (
             <div className="p-6 body-m text-center text-on-surface-variant">
@@ -276,7 +295,108 @@ function ManualAccountRow({
   );
 }
 
-function AccountRow({ account }: { account: Account }) {
+function FamilyMembersPanel({ members }: { members: FamilyMember[] }) {
+  const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await createFamilyMember(newName);
+      setNewName("");
+      toast.success("Family member added");
+      router.refresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not add family member", err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rename(member: FamilyMember) {
+    const next = window.prompt(`Rename ${member.name} to:`, member.name);
+    if (!next || next.trim() === member.name) return;
+    try {
+      await renameFamilyMember(member.id, next);
+      toast.success("Family member renamed");
+      router.refresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Rename failed");
+    }
+  }
+
+  async function remove(member: FamilyMember) {
+    const ok = await confirm({
+      title: `Remove ${member.name}?`,
+      body: `Accounts held for ${member.name} return to your own net worth, and their history chart is deleted. The accounts themselves are not touched.`,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    try {
+      await deleteFamilyMember(member.id);
+      toast.success("Family member removed");
+      router.refresh();
+    } catch (err) {
+      console.error(err);
+      toast.error("Remove failed");
+    }
+  }
+
+  return (
+    <section className="card-elevated space-y-4">
+      <div>
+        <h2 className="title-l">Family members</h2>
+        <p className="body-m mt-1 text-on-surface-variant">
+          Add the people you hold accounts for — a child&rsquo;s 529 or UTMA, for example. Use the
+          &ldquo;Held for&rdquo; selector on an account below to tag it: the balance leaves your net worth
+          and allocations, contributions count as gifts, and their investments get their own view under
+          Dashboard → Family.
+        </p>
+      </div>
+
+      <form onSubmit={add} className="flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="overline">Name</span>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            className="tf"
+            maxLength={80}
+            placeholder="e.g. Emma"
+          />
+        </label>
+        <button type="submit" disabled={busy || !newName.trim()} className="btn btn-filled">
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} strokeWidth={2} />}
+          Add
+        </button>
+      </form>
+
+      {members.length > 0 && (
+        <ul className="divide-y divide-outline-variant rounded-2xl bg-surface-low">
+          {members.map((m) => (
+            <li key={m.id} className="flex items-center gap-2 px-4 py-3">
+              <span className="body-m flex-1 text-on-surface">{m.name}</span>
+              <button type="button" onClick={() => void rename(m)} className="btn-icon" title={`Rename ${m.name}`}>
+                <Pencil size={14} strokeWidth={1.75} />
+              </button>
+              <button type="button" onClick={() => void remove(m)} className="btn-icon" title={`Remove ${m.name}`}>
+                <Trash2 size={14} strokeWidth={1.75} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function AccountRow({ account, familyMembers }: { account: Account; familyMembers: FamilyMember[] }) {
   const toast = useToast();
   const effective = (account.userOverride ?? account.systemGroup) as AccountGroup;
   const [group, setGroup] = useState<AccountGroup>(effective);
@@ -289,6 +409,29 @@ function AccountRow({ account }: { account: Account }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(account.name);
   const [savingName, setSavingName] = useState(false);
+  const [heldFor, setHeldFor] = useState<string>(account.heldForId ?? "");
+  const [savingHeldFor, setSavingHeldFor] = useState(false);
+
+  async function saveHeldFor(nextId: string) {
+    const previous = heldFor;
+    setHeldFor(nextId);
+    setSavingHeldFor(true);
+    try {
+      await setAccountHeldFor(account.id, nextId || null);
+      const memberName = familyMembers.find((m) => m.id === nextId)?.name;
+      toast.success(
+        memberName ? `Held for ${memberName}` : "Back in your own net worth",
+        "Net-worth history rebuilt.",
+      );
+    } catch (err) {
+      console.error(err);
+      setHeldFor(previous);
+      toast.error("Could not update held-for");
+    } finally {
+      setSavingHeldFor(false);
+    }
+  }
+
   function save(next: AccountGroup | "default") {
     setStatus("idle");
     startTransition(async () => {
@@ -431,6 +574,25 @@ function AccountRow({ account }: { account: Account }) {
       </div>
 
       <div className="flex items-center gap-2">
+        {familyMembers.length > 0 && (
+          <label className="flex items-center gap-1.5">
+            <span className="body-s text-on-surface-variant">Held for</span>
+            <select
+              value={heldFor}
+              disabled={savingHeldFor}
+              onChange={(e) => void saveHeldFor(e.target.value)}
+              className="h-10 rounded-full border border-outline bg-surface px-3 text-sm text-on-surface focus:border-primary focus:outline-none disabled:opacity-50"
+            >
+              <option value="">Myself</option>
+              {familyMembers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            {savingHeldFor && <Loader2 size={16} className="animate-spin text-on-surface-variant" />}
+          </label>
+        )}
         <select
           value={group}
           disabled={pending}
@@ -479,6 +641,7 @@ function toClientAccount(account: {
   accountGroup: string;
   userAccountGroup: string | null;
   nameIsCustom?: boolean;
+  heldForId?: string | null;
   currentBalance: string | number | null;
   isoCurrencyCode: string | null;
   source: string;
@@ -493,6 +656,7 @@ function toClientAccount(account: {
     systemGroup: account.accountGroup,
     userOverride: account.userAccountGroup,
     nameIsCustom: account.nameIsCustom ?? false,
+    heldForId: account.heldForId ?? null,
     currentBalance: Number(account.currentBalance ?? 0),
     currency: account.isoCurrencyCode,
     source: account.source,
