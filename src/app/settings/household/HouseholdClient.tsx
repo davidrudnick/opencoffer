@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Copy, UserPlus, LogOut } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { copyText } from "@/lib/clientCompat";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 type Member = {
@@ -126,7 +127,7 @@ export function HouseholdClient({
                   {invite.url}
                 </code>
                 <button
-                  onClick={() => navigator.clipboard.writeText(invite.url)}
+                  onClick={() => void copyText(invite.url)}
                   className="btn btn-text"
                 >
                   <Copy size={14} /> Copy

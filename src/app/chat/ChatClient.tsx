@@ -4,6 +4,7 @@ import { useChat } from "ai/react";
 import type { Message as AiMessage } from "ai";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { copyText } from "@/lib/clientCompat";
 import Link from "next/link";
 import {
   Send,
@@ -476,7 +477,7 @@ function Message({
 
   const copy = async () => {
     if (!content) return;
-    await navigator.clipboard.writeText(content);
+    await copyText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

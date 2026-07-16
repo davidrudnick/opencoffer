@@ -4,6 +4,7 @@ import * as Toast from "@radix-ui/react-toast";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clientId } from "@/lib/clientCompat";
 
 type ToastVariant = "success" | "error";
 
@@ -30,7 +31,7 @@ export function ToasterProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
   const toast = useCallback((input: ToastInput) => {
-    const id = crypto.randomUUID();
+    const id = clientId();
     setToasts((current) => [
       ...current,
       { ...input, id, variant: input.variant ?? "success" },

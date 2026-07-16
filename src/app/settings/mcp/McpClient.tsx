@@ -4,6 +4,7 @@ import { useState } from "react";
 import { DataTable, Th, Td, Tr, Thead } from "@/components/DataTable";
 import { Plus, Copy, Check } from "lucide-react";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { copyText } from "@/lib/clientCompat";
 
 type Token = {
   id: string;
@@ -99,7 +100,7 @@ hermes "Summarise my last month of spending and flag anything unusual."`;
               {revealed}
             </code>
             <button
-              onClick={() => navigator.clipboard.writeText(revealed)}
+              onClick={() => void copyText(revealed)}
               className="btn btn-tonal"
             >
               <Copy size={16} strokeWidth={2} />
@@ -274,7 +275,7 @@ function Snippet({
         <div className="body-m mt-2 text-on-surface-variant">{subtitle}</div>
         <button
           onClick={() => {
-            navigator.clipboard.writeText(code);
+            void copyText(code);
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           }}
