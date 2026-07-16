@@ -29,7 +29,7 @@ OpenCoffer is read-only against your financial accounts. It syncs through [Simpl
 - **Bank & brokerage sync** via SimpleFIN — one-token setup, encrypted access URLs.
 - **Net worth, cash flow, spending, subscriptions, holdings, real assets, budgets, alerts, saved charts** — all deterministic, all generated from your database.
 - **Deterministic transaction rules** — create merchant/name matching rules from transactions before AI categorization runs.
-- **Family accounts** — tag an account as held for a child (529/UTMA): it leaves your net worth and allocations, contributions count as gifts, and each family member gets their own allocation + history view.
+- **Family accounts** — tag an account as held for a child (529/UTMA): it leaves your net worth and allocations, contributions count as gifts, and each family member gets their own allocation + history view. See [docs/family-accounts.md](docs/family-accounts.md).
 - **Alert push notifications** — deliver in-app alerts to ntfy, Discord, Slack, or a generic webhook.
 - **Bring your own LLM** — OpenAI, Anthropic, any OpenAI-compatible provider, ChatGPT subscription auth, local Ollama, or a self-hosted endpoint.
 - **Persistent chat with finance tools** — model picker, conversation history, category fixes, deterministic chart tools the LLM can call.
@@ -127,6 +127,7 @@ All configuration lives in `.env` (Docker) or `.env.local` (dev). See [`.env.exa
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `NEXTAUTH_SECRET` | Yes | Auth.js session secret — `openssl rand -base64 32` |
 | `NEXTAUTH_URL` | Yes | Public URL of the web app |
+| `AUTH_TRUST_HOST` | No | Set to `true` when serving on any hostname other than `localhost` (LAN hostname, reverse proxy, Tailscale) — Auth.js v5 otherwise rejects every auth request with `UntrustedHost` |
 | `DISABLE_REGISTRATION` | No | Set to `1` to block new registrations after the first user exists |
 | `APP_ENCRYPTION_KEY` | Yes | 32-byte base64 key for at-rest encryption of secrets |
 | `APP_URL` | Yes | Used in MCP setup snippets shown in the UI |
